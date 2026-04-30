@@ -84,6 +84,8 @@ static void render_debug_overlay(struct swaylock_surface *surface) {
 	int line_h = (int)ceil(fe.height + pad);
 	int buf_w = surface->width * surface->scale;
 	int buf_h = line_h * count;
+	int s = surface->scale;
+	buf_h = (buf_h + s - 1) / s * s;
 
 	struct pool_buffer *buf = get_next_buffer(
 		state->shm, surface->overlay_buffers, buf_w, buf_h);

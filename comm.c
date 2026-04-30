@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
@@ -201,6 +202,17 @@ bool spawn_comm_child(void) {
 		sigaction(SIGUSR1, &sa, NULL);
 		close(comm[0][1]);
 		close(comm[1][0]);
+		/* Redirect stdin and stdout to /dev/null so the PAM
+		 * module cannot fall back to prompting on the terminal
+		 * if the main process exits or authd is unavailable. */
+		int devnull = open("/dev/null", O_RDWR);
+		if (devnull >= 0) {
+			dup2(devnull, STDIN_FILENO);
+			dup2(devnull, STDOUT_FILENO);
+			if (devnull > STDOUT_FILENO) {
+				close(devnull);
+			}
+		}
 		run_pw_backend_child();
 		/* run_pw_backend_child calls exit(); unreachable */
 		abort();
