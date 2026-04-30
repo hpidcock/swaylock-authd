@@ -1094,6 +1094,25 @@ static int load_config(char *path, struct swaylock_state *state,
 
 static struct swaylock_state state;
 
+static const char *auth_state_str(enum auth_state s) {
+	switch (s) {
+	case AUTH_STATE_IDLE:       return "idle";
+	case AUTH_STATE_VALIDATING: return "validating";
+	case AUTH_STATE_INVALID:    return "invalid";
+	default:                    return "unknown";
+	}
+}
+
+static const char *authd_stage_str(enum authd_stage s) {
+	switch (s) {
+	case AUTHD_STAGE_NONE:      return "none";
+	case AUTHD_STAGE_BROKER:    return "broker";
+	case AUTHD_STAGE_AUTH_MODE: return "auth_mode";
+	case AUTHD_STAGE_CHALLENGE: return "challenge";
+	default:                    return "unknown";
+	}
+}
+
 static void display_in(int fd, short mask, void *data) {
 	if (wl_display_dispatch(state.display) == -1) {
 		state.run_display = false;
@@ -1128,11 +1147,25 @@ static void comm_in(int fd, short mask, void *data) {
 		exit(EXIT_FAILURE);
 	}
 
+	swaylock_log(LOG_DEBUG,
+		"comm_in: msg=0x%02x len=%zu "
+		"auth=%s stage=%s",
+		type, len,
+		auth_state_str(state.auth_state),
+		authd_stage_str(state.authd_stage));
+
 	switch (type) {
 	case COMM_MSG_AUTH_RESULT:
 		if (len >= 1 && payload[0] == 0x01) {
+			swaylock_log(LOG_DEBUG,
+				"comm_in: AUTH_RESULT granted"
+				" -> unlocking");
 			state.run_display = false;
 		} else {
+			swaylock_log(LOG_DEBUG,
+				"comm_in: AUTH_RESULT denied"
+				" auth=%s -> invalid",
+				auth_state_str(state.auth_state));
 			state.auth_state = AUTH_STATE_INVALID;
 			schedule_auth_idle(&state);
 			++state.failed_attempts;
@@ -1173,6 +1206,9 @@ static void comm_in(int fd, short mask, void *data) {
 		}
 		state.authd_active = true;
 		state.authd_stage = AUTHD_STAGE_BROKER;
+		swaylock_log(LOG_DEBUG,
+			"comm_in: BROKERS n=%d -> stage=broker",
+			state.authd_num_brokers);
 		damage_state(&state);
 		break;
 
@@ -1209,6 +1245,9 @@ static void comm_in(int fd, short mask, void *data) {
 		}
 		state.authd_active = true;
 		state.authd_stage = AUTHD_STAGE_AUTH_MODE;
+		swaylock_log(LOG_DEBUG,
+			"comm_in: AUTH_MODES n=%d -> stage=auth_mode",
+			state.authd_num_auth_modes);
 		damage_state(&state);
 		break;
 
@@ -1251,6 +1290,14 @@ static void comm_in(int fd, short mask, void *data) {
 		/* A new UI layout means authd has moved on from the
 		 * previous input — clear any lingering "Verifying"
 		 * indicator so the user can interact with the new UI. */
+		swaylock_log(LOG_DEBUG,
+			"comm_in: UI_LAYOUT type=%s label=%s "
+			"entry=%s wait=%d auth=%s -> idle/challenge",
+			state.authd_layout.type   ? state.authd_layout.type  : "(null)",
+			state.authd_layout.label  ? state.authd_layout.label : "(null)",
+			state.authd_layout.entry  ? state.authd_layout.entry : "(null)",
+			state.authd_layout.wait,
+			auth_state_str(state.auth_state));
 		state.auth_state = AUTH_STATE_IDLE;
 		state.authd_stage = AUTHD_STAGE_CHALLENGE;
 		damage_state(&state);
@@ -1258,7 +1305,7 @@ static void comm_in(int fd, short mask, void *data) {
 
 	case COMM_MSG_STAGE:
 		if (len >= 1) {
-			state.authd_stage =
+			enum authd_stage new_stage =
 				(enum authd_stage)((uint8_t)payload[0]);
 			/* authd responds to a wrong/empty credential
 			 * with auth.Retry, which emits startAuthentication
@@ -1267,10 +1314,25 @@ static void comm_in(int fd, short mask, void *data) {
 			 * Treat it as a failed attempt so the user sees
 			 * "Wrong" before being asked to try again. */
 			if (state.auth_state == AUTH_STATE_VALIDATING) {
+				swaylock_log(LOG_DEBUG,
+					"comm_in: STAGE %s -> %s"
+					" while validating:"
+					" auth.Retry assumed,"
+					" auth=validating -> invalid",
+					authd_stage_str(state.authd_stage),
+					authd_stage_str(new_stage));
 				state.auth_state = AUTH_STATE_INVALID;
 				schedule_auth_idle(&state);
 				++state.failed_attempts;
+			} else {
+				swaylock_log(LOG_DEBUG,
+					"comm_in: STAGE %s -> %s"
+					" auth=%s",
+					authd_stage_str(state.authd_stage),
+					authd_stage_str(new_stage),
+					auth_state_str(state.auth_state));
 			}
+			state.authd_stage = new_stage;
 			damage_state(&state);
 		}
 		break;
@@ -1291,6 +1353,11 @@ static void comm_in(int fd, short mask, void *data) {
 			}
 		}
 		/* reset auth indicator */
+		swaylock_log(LOG_DEBUG,
+			"comm_in: AUTH_EVENT msg=%s"
+			" auth=%s -> idle",
+			state.authd_error ? state.authd_error : "(null)",
+			auth_state_str(state.auth_state));
 		state.auth_state = AUTH_STATE_IDLE;
 		damage_state(&state);
 		break;

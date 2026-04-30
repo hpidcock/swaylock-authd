@@ -112,18 +112,28 @@ static void cancel_password_clear(struct swaylock_state *state) {
 
 static void submit_password(struct swaylock_state *state) {
 	if (state->args.ignore_empty && state->password.len == 0) {
+		swaylock_log(LOG_DEBUG,
+			"submit_password: skipped (ignore_empty)");
 		return;
 	}
 	if (state->auth_state == AUTH_STATE_VALIDATING) {
+		swaylock_log(LOG_DEBUG,
+			"submit_password: skipped (already validating)");
 		return;
 	}
 
+	swaylock_log(LOG_DEBUG,
+		"submit_password: sending (len=%zu) auth=idle -> validating",
+		state->password.len);
 	state->input_state = INPUT_STATE_IDLE;
 	state->auth_state = AUTH_STATE_VALIDATING;
 	cancel_password_clear(state);
 	cancel_input_idle(state);
 
 	if (!write_comm_password(&state->password)) {
+		swaylock_log(LOG_DEBUG,
+			"submit_password: write failed"
+			" auth=validating -> invalid");
 		state->auth_state = AUTH_STATE_INVALID;
 		schedule_auth_idle(state);
 	}
