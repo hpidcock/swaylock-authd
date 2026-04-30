@@ -1,0 +1,8 @@
+.{
+    .name = .swaylock,
+    .version = "1.8.5",
+    .fingerprint = 0xff93bdec5d0e41ee,
+    .minimum_zig_version = "0.14.0",
+    .dependencies = .{},
+    .paths = .{""},
+}
