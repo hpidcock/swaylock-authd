@@ -11,7 +11,7 @@ override_dh_auto_configure:
 		-Dzsh-completions=true \
 		-Dbash-completions=true \
 		-Dfish-completions=true \
-		$(if $(filter true,$(DEBUG_OVERLAY)),-Ddebug-overlay=true -Dbuildtype=debug)
+		$(if $(filter true,$(DEBUG_OVERLAY)),-Ddebug-overlay=true -Ddebug=true -Doptimization=0)
 
 override_dh_strip:
 	$(if $(filter true,$(DEBUG_OVERLAY)),true,dh_strip)
