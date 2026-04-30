@@ -212,7 +212,6 @@ pub fn build(b: *std.Build) void {
         "password.c",
         "password-buffer.c",
         "pool-buffer.c",
-        "render.c",
         "seat.c",
         "unicode.c",
     };
@@ -221,6 +220,42 @@ pub fn build(b: *std.Build) void {
             ctx.cobj(b.path(src), std.fs.path.stem(src), c_flags),
         );
     }
+
+    // Compile render.zig as a Zig object; it replaces render.c.
+    const render_options = b.addOptions();
+    render_options.addOption(bool, "have_qrencode", have_qrencode);
+    render_options.addOption(
+        bool, "have_debug_overlay", debug_overlay);
+
+    const render_mod = b.createModule(.{
+        .root_source_file = b.path("render.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    render_mod.addImport(
+        "render_options", render_options.createModule());
+    render_mod.addIncludePath(b.path("include"));
+    render_mod.addIncludePath(proto_h_dir);
+    for (sys_includes.items) |flag| {
+        const fi = std.mem.trim(u8, flag, " \t\n\r");
+        if (std.mem.startsWith(u8, fi, "-I")) {
+            const path = fi[2..];
+            render_mod.addSystemIncludePath(
+                .{ .cwd_relative = path });
+            // Also add the parent so that e.g. <cairo/cairo.h>
+            // resolves when pkg-config gives .../include/cairo.
+            if (std.fs.path.dirname(path)) |parent| {
+                render_mod.addSystemIncludePath(
+                    .{ .cwd_relative = parent });
+            }
+        }
+    }
+    const render_obj = b.addObject(.{
+        .name = "render",
+        .root_module = render_mod,
+    });
+    exe_mod.addObjectFile(render_obj.getEmittedBin());
 
     exe_mod.addObjectFile(
         ctx.cobj(
