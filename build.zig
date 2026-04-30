@@ -45,8 +45,7 @@ pub fn build(b: *std.Build) void {
         []const u8,
         "wl-proto-dir",
         "wayland-protocols pkgdatadir",
-    ) orelse b.graph.environ_map.get("WL_PROTOCOLS_PKGDATADIR")
-        orelse "/usr/share/wayland-protocols";
+    ) orelse b.graph.environ_map.get("WL_PROTOCOLS_PKGDATADIR") orelse "/usr/share/wayland-protocols";
 
     // Generate ext-session-lock-v1 protocol glue via wayland-scanner.
     const ext_lock_xml = b.fmt(
@@ -84,10 +83,8 @@ pub fn build(b: *std.Build) void {
     ) catch @panic("OOM");
     if (have_gdk_pixbuf)
         pc_args.append(b.allocator, "gdk-pixbuf-2.0") catch @panic("OOM");
-    if (have_pam) {
+    if (have_pam)
         pc_args.append(b.allocator, "pam") catch @panic("OOM");
-        pc_args.append(b.allocator, "libcjson") catch @panic("OOM");
-    }
     if (have_qrencode)
         pc_args.append(b.allocator, "libqrencode") catch @panic("OOM");
 
@@ -152,9 +149,11 @@ pub fn build(b: *std.Build) void {
     // Protocol glue only needs basic flags, no feature defines.
     var proto_flags_list: std.ArrayList([]const u8) = .empty;
     proto_flags_list.appendSlice(
-        b.allocator, sys_includes.items,
+        b.allocator,
+        sys_includes.items,
     ) catch @panic("OOM");
-    proto_flags_list.appendSlice(b.allocator,
+    proto_flags_list.appendSlice(
+        b.allocator,
         &.{ "-std=c11", "-D_POSIX_C_SOURCE=200809L" },
     ) catch @panic("OOM");
     const proto_flags =
@@ -202,30 +201,186 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
 
-    const c_sources = [_][]const u8{
-        "background-image.c",
-        "cairo.c",
-        "comm.c",
-        "log.c",
-        "loop.c",
-        "main.c",
-        "password.c",
-        "password-buffer.c",
-        "pool-buffer.c",
-        "seat.c",
-        "unicode.c",
-    };
-    for (c_sources) |src| {
-        exe_mod.addObjectFile(
-            ctx.cobj(b.path(src), std.fs.path.stem(src), c_flags),
-        );
+    // Compile unicode.zig as a Zig object; it replaces unicode.c.
+    const unicode_mod = b.createModule(.{
+        .root_source_file = b.path("unicode.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const unicode_obj = b.addObject(.{
+        .name = "unicode",
+        .root_module = unicode_mod,
+    });
+    exe_mod.addObjectFile(unicode_obj.getEmittedBin());
+
+    // Compile cairo.zig as a Zig object; it replaces cairo.c.
+    const cairo_options = b.addOptions();
+    cairo_options.addOption(bool, "have_gdk_pixbuf", have_gdk_pixbuf);
+    const cairo_mod = b.createModule(.{
+        .root_source_file = b.path("cairo.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    cairo_mod.addImport("cairo_options", cairo_options.createModule());
+    cairo_mod.addIncludePath(b.path("include"));
+    cairo_mod.addIncludePath(proto_h_dir);
+    for (sys_includes.items) |flag| {
+        const fi = std.mem.trim(u8, flag, " \t\n\r");
+        if (std.mem.startsWith(u8, fi, "-I")) {
+            const path = fi[2..];
+            cairo_mod.addSystemIncludePath(.{ .cwd_relative = path });
+            if (std.fs.path.dirname(path)) |parent| {
+                cairo_mod.addSystemIncludePath(
+                    .{ .cwd_relative = parent },
+                );
+            }
+        }
     }
+    const cairo_obj = b.addObject(.{
+        .name = "cairo",
+        .root_module = cairo_mod,
+    });
+    exe_mod.addObjectFile(cairo_obj.getEmittedBin());
+
+    // Compile seat.zig as a Zig object; it replaces seat.c.
+    const seat_mod = b.createModule(.{
+        .root_source_file = b.path("seat.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    seat_mod.addIncludePath(b.path("include"));
+    seat_mod.addIncludePath(proto_h_dir);
+    for (sys_includes.items) |flag| {
+        const fi = std.mem.trim(u8, flag, " \t\n\r");
+        if (std.mem.startsWith(u8, fi, "-I")) {
+            const path = fi[2..];
+            seat_mod.addSystemIncludePath(.{ .cwd_relative = path });
+            if (std.fs.path.dirname(path)) |parent| {
+                seat_mod.addSystemIncludePath(
+                    .{ .cwd_relative = parent },
+                );
+            }
+        }
+    }
+    const seat_obj = b.addObject(.{
+        .name = "seat",
+        .root_module = seat_mod,
+    });
+    exe_mod.addObjectFile(seat_obj.getEmittedBin());
+
+    // Compile pool-buffer.zig as a Zig object; it replaces pool-buffer.c.
+    const pool_buffer_mod = b.createModule(.{
+        .root_source_file = b.path("pool-buffer.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    pool_buffer_mod.addIncludePath(b.path("include"));
+    pool_buffer_mod.addIncludePath(proto_h_dir);
+    for (sys_includes.items) |flag| {
+        const fi = std.mem.trim(u8, flag, " \t\n\r");
+        if (std.mem.startsWith(u8, fi, "-I")) {
+            const path = fi[2..];
+            pool_buffer_mod.addSystemIncludePath(.{ .cwd_relative = path });
+            if (std.fs.path.dirname(path)) |parent| {
+                pool_buffer_mod.addSystemIncludePath(
+                    .{ .cwd_relative = parent },
+                );
+            }
+        }
+    }
+    const pool_buffer_obj = b.addObject(.{
+        .name = "pool-buffer",
+        .root_module = pool_buffer_mod,
+    });
+    exe_mod.addObjectFile(pool_buffer_obj.getEmittedBin());
+
+    // Compile background-image.zig as a Zig object; it replaces
+    // background-image.c.
+    const bg_image_options = b.addOptions();
+    bg_image_options.addOption(
+        bool,
+        "have_gdk_pixbuf",
+        have_gdk_pixbuf,
+    );
+    const bg_image_mod = b.createModule(.{
+        .root_source_file = b.path("background-image.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    bg_image_mod.addImport(
+        "background_image_options",
+        bg_image_options.createModule(),
+    );
+    bg_image_mod.addIncludePath(b.path("include"));
+    bg_image_mod.addIncludePath(proto_h_dir);
+    for (sys_includes.items) |flag| {
+        const fi = std.mem.trim(u8, flag, " \t\n\r");
+        if (std.mem.startsWith(u8, fi, "-I")) {
+            const path = fi[2..];
+            bg_image_mod.addSystemIncludePath(
+                .{ .cwd_relative = path },
+            );
+            if (std.fs.path.dirname(path)) |parent| {
+                bg_image_mod.addSystemIncludePath(
+                    .{ .cwd_relative = parent },
+                );
+            }
+        }
+    }
+    const bg_image_obj = b.addObject(.{
+        .name = "background-image",
+        .root_module = bg_image_mod,
+    });
+    exe_mod.addObjectFile(bg_image_obj.getEmittedBin());
+
+    // Compile loop.zig as a Zig object; it replaces loop.c.
+    const loop_mod = b.createModule(.{
+        .root_source_file = b.path("loop.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    loop_mod.addIncludePath(b.path("include"));
+    loop_mod.addIncludePath(proto_h_dir);
+    for (sys_includes.items) |flag| {
+        const fi = std.mem.trim(u8, flag, " \t\n\r");
+        if (std.mem.startsWith(u8, fi, "-I")) {
+            const path = fi[2..];
+            loop_mod.addSystemIncludePath(.{ .cwd_relative = path });
+            if (std.fs.path.dirname(path)) |parent| {
+                loop_mod.addSystemIncludePath(
+                    .{ .cwd_relative = parent },
+                );
+            }
+        }
+    }
+    const loop_obj = b.addObject(.{
+        .name = "loop",
+        .root_module = loop_mod,
+    });
+    exe_mod.addObjectFile(loop_obj.getEmittedBin());
 
     // Compile render.zig as a Zig object; it replaces render.c.
     const render_options = b.addOptions();
     render_options.addOption(bool, "have_qrencode", have_qrencode);
-    render_options.addOption(
-        bool, "have_debug_overlay", debug_overlay);
+    render_options.addOption(bool, "have_debug_overlay", debug_overlay);
+    // Compile main.zig as a Zig object; it replaces main.c.
+    const main_options = b.addOptions();
+    main_options.addOption(bool, "have_debug_overlay", debug_overlay);
+    main_options.addOption(
+        bool,
+        "have_debug_unlock_on_crash",
+        debug_unlock_on_crash,
+    );
+    main_options.addOption([]const u8, "sysconfdir", sysconfdir);
+    main_options.addOption([]const u8, "swaylock_version", "1.8.5");
+
+    const log_options = b.addOptions();
+    log_options.addOption(bool, "have_debug_overlay", debug_overlay);
 
     const render_mod = b.createModule(.{
         .root_source_file = b.path("render.zig"),
@@ -233,21 +388,18 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    render_mod.addImport(
-        "render_options", render_options.createModule());
+    render_mod.addImport("render_options", render_options.createModule());
     render_mod.addIncludePath(b.path("include"));
     render_mod.addIncludePath(proto_h_dir);
     for (sys_includes.items) |flag| {
         const fi = std.mem.trim(u8, flag, " \t\n\r");
         if (std.mem.startsWith(u8, fi, "-I")) {
             const path = fi[2..];
-            render_mod.addSystemIncludePath(
-                .{ .cwd_relative = path });
+            render_mod.addSystemIncludePath(.{ .cwd_relative = path });
             // Also add the parent so that e.g. <cairo/cairo.h>
             // resolves when pkg-config gives .../include/cairo.
             if (std.fs.path.dirname(path)) |parent| {
-                render_mod.addSystemIncludePath(
-                    .{ .cwd_relative = parent });
+                render_mod.addSystemIncludePath(.{ .cwd_relative = parent });
             }
         }
     }
@@ -256,6 +408,100 @@ pub fn build(b: *std.Build) void {
         .root_module = render_mod,
     });
     exe_mod.addObjectFile(render_obj.getEmittedBin());
+
+    const main_mod = b.createModule(.{
+        .root_source_file = b.path("main.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    main_mod.addImport("main_options", main_options.createModule());
+    main_mod.addIncludePath(b.path("include"));
+    main_mod.addIncludePath(proto_h_dir);
+    for (sys_includes.items) |flag| {
+        const fi = std.mem.trim(u8, flag, " \t\n\r");
+        if (std.mem.startsWith(u8, fi, "-I")) {
+            const path = fi[2..];
+            main_mod.addSystemIncludePath(.{ .cwd_relative = path });
+            if (std.fs.path.dirname(path)) |parent| {
+                main_mod.addSystemIncludePath(
+                    .{ .cwd_relative = parent },
+                );
+            }
+        }
+    }
+    const main_obj = b.addObject(.{
+        .name = "main",
+        .root_module = main_mod,
+    });
+    exe_mod.addObjectFile(main_obj.getEmittedBin());
+
+    // Compile password.zig as a Zig object; it replaces password.c
+    // and password-buffer.c.
+    const password_mod = b.createModule(.{
+        .root_source_file = b.path("password.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    password_mod.addIncludePath(b.path("include"));
+    password_mod.addIncludePath(proto_h_dir);
+    for (sys_includes.items) |flag| {
+        const fi = std.mem.trim(u8, flag, " \t\n\r");
+        if (std.mem.startsWith(u8, fi, "-I")) {
+            const path = fi[2..];
+            password_mod.addSystemIncludePath(.{ .cwd_relative = path });
+            if (std.fs.path.dirname(path)) |parent| {
+                password_mod.addSystemIncludePath(
+                    .{ .cwd_relative = parent },
+                );
+            }
+        }
+    }
+    const password_obj = b.addObject(.{
+        .name = "password",
+        .root_module = password_mod,
+    });
+    exe_mod.addObjectFile(password_obj.getEmittedBin());
+
+    const comm_mod = b.createModule(.{
+        .root_source_file = b.path("comm.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    comm_mod.addIncludePath(b.path("include"));
+    comm_mod.addIncludePath(proto_h_dir);
+    for (sys_includes.items) |flag| {
+        const fi = std.mem.trim(u8, flag, " \t\n\r");
+        if (std.mem.startsWith(u8, fi, "-I")) {
+            const path = fi[2..];
+            comm_mod.addSystemIncludePath(.{ .cwd_relative = path });
+            if (std.fs.path.dirname(path)) |parent| {
+                comm_mod.addSystemIncludePath(
+                    .{ .cwd_relative = parent },
+                );
+            }
+        }
+    }
+    const comm_obj = b.addObject(.{
+        .name = "comm",
+        .root_module = comm_mod,
+    });
+    exe_mod.addObjectFile(comm_obj.getEmittedBin());
+
+    const log_mod = b.createModule(.{
+        .root_source_file = b.path("log.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    log_mod.addImport("log_options", log_options.createModule());
+    const log_obj = b.addObject(.{
+        .name = "log",
+        .root_module = log_mod,
+    });
+    exe_mod.addObjectFile(log_obj.getEmittedBin());
 
     exe_mod.addObjectFile(
         ctx.cobj(
@@ -266,11 +512,33 @@ pub fn build(b: *std.Build) void {
     );
 
     if (have_pam) {
+        const pam_mod = b.createModule(.{
+            .root_source_file = b.path("pam.zig"),
+            .target = target,
+            .optimize = optimize,
+            .link_libc = true,
+        });
+        pam_mod.addIncludePath(b.path("include"));
+        pam_mod.addIncludePath(proto_h_dir);
+        for (sys_includes.items) |flag| {
+            const fi = std.mem.trim(u8, flag, " \t\n\r");
+            if (std.mem.startsWith(u8, fi, "-I")) {
+                const path = fi[2..];
+                pam_mod.addSystemIncludePath(.{ .cwd_relative = path });
+                if (std.fs.path.dirname(path)) |parent| {
+                    pam_mod.addSystemIncludePath(.{ .cwd_relative = parent });
+                }
+            }
+        }
+        const pam_obj = b.addObject(.{
+            .name = "pam",
+            .root_module = pam_mod,
+        });
+        exe_mod.addObjectFile(pam_obj.getEmittedBin());
         exe_mod.addObjectFile(
-            ctx.cobj(b.path("pam.c"), "pam", c_flags),
+            ctx.cobj(b.path("pam_gdm_shim.c"), "pam_gdm_shim", c_flags),
         );
         exe_mod.linkSystemLibrary("pam", .{});
-        exe_mod.linkSystemLibrary("libcjson", .{});
         if (have_qrencode)
             exe_mod.linkSystemLibrary("libqrencode", .{});
     } else {

@@ -1,0 +1,82 @@
+//! UTF-8 utility functions exported with a C ABI.
+//! Replaces unicode.c; consumers @cImport("unicode.h") and
+//! link against this object.
+
+const std = @import("std");
+
+/// Returns the byte size of the last UTF-8 character in the
+/// null-terminated string str, or 0 if the string is empty.
+/// Does not validate that the buffer contains correct UTF-8.
+export fn utf8_last_size(str: [*c]const u8) c_int {
+    const s = std.mem.sliceTo(str, 0);
+    if (s.len == 0) return 0;
+    var i: usize = s.len;
+    var len: c_int = 0;
+    while (i > 0) {
+        i -= 1;
+        len += 1;
+        if ((s[i] & 0xc0) != 0x80) return len;
+    }
+    return 0;
+}
+
+/// Returns the number of bytes needed to encode codepoint ch
+/// as UTF-8.
+export fn utf8_chsize(ch: u32) usize {
+    if (ch > 0x10FFFF) return 4;
+    return std.unicode.utf8CodepointSequenceLength(
+        @intCast(ch),
+    ) catch 4;
+}
+
+/// Encodes codepoint ch as UTF-8 into str and returns the byte
+/// length. Uses std.unicode for valid codepoints; falls back to
+/// manual encoding for surrogates and out-of-range values.
+export fn utf8_encode(str: [*c]u8, ch: u32) usize {
+    if (ch <= 0x10FFFF) {
+        var buf: [4]u8 = undefined;
+        const n = std.unicode.utf8Encode(
+            @intCast(ch),
+            &buf,
+        ) catch return encodeManual(str, ch);
+        @memcpy(str[0..n], buf[0..n]);
+        return n;
+    }
+    return encodeManual(str, ch);
+}
+
+/// Returns the byte length of the next UTF-8 character at s[0],
+/// or -1 if s[0] is a continuation byte or otherwise invalid.
+export fn utf8_size(s: [*c]const u8) c_int {
+    const n = std.unicode.utf8ByteSequenceLength(s[0]) catch
+        return -1;
+    return @intCast(n);
+}
+
+// Encodes ch without Unicode validation, matching the C
+// implementation for surrogates and out-of-range codepoints.
+fn encodeManual(str: [*c]u8, ch_in: u32) usize {
+    var ch = ch_in;
+    var first: u8 = undefined;
+    var len: usize = undefined;
+    if (ch < 0x80) {
+        first = 0;
+        len = 1;
+    } else if (ch < 0x800) {
+        first = 0xc0;
+        len = 2;
+    } else if (ch < 0x10000) {
+        first = 0xe0;
+        len = 3;
+    } else {
+        first = 0xf0;
+        len = 4;
+    }
+    var i: usize = len - 1;
+    while (i > 0) : (i -= 1) {
+        str[i] = @as(u8, @truncate(ch & 0x3f)) | 0x80;
+        ch >>= 6;
+    }
+    str[0] = @as(u8, @truncate(ch)) | first;
+    return len;
+}
