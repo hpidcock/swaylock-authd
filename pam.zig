@@ -75,6 +75,29 @@ fn slog(
     );
 }
 
+// jsonStringifyAllocBytes serialises v to JSON, returning an
+// allocator-owned []u8. Compatible with Zig 0.14 and 0.16.
+fn jsonStringifyAllocBytes(
+    alloc: std.mem.Allocator,
+    v: anytype,
+) ![]u8 {
+    if (comptime @hasDecl(std.json, "stringifyAlloc")) {
+        return std.json.stringifyAlloc(alloc, v, .{});
+    } else {
+        return std.json.Stringify.valueAlloc(alloc, v, .{});
+    }
+}
+
+// jsonStringifyC serialises v to JSON and returns a c_allocator-owned
+// null-terminated C string, or null on allocation failure.
+// The caller is responsible for c.free()-ing the result.
+fn jsonStringifyC(v: anytype) ?[*:0]u8 {
+    const bytes = jsonStringifyAllocBytes(std.heap.c_allocator, v) catch
+        return null;
+    defer std.heap.c_allocator.free(bytes);
+    return (std.heap.c_allocator.dupeZ(u8, bytes) catch return null).ptr;
+}
+
 /// Free all heap-allocated fields of a ui-layout and zero the struct.
 export fn authd_ui_layout_clear(layout: *types.AuthdUiLayout) void {
     c.free(layout.type);
@@ -299,12 +322,8 @@ fn handleGdmJson(
     };
     slog(log_debug, @src(), "handle_gdm_json: type={s}", .{tp});
 
-    var aw: std.Io.Writer.Allocating = .init(std.heap.c_allocator);
-    defer aw.deinit();
-    var jw: std.json.Stringify = .{ .writer = &aw.writer };
-
     if (std.mem.eql(u8, tp, "hello")) {
-        jw.write(GdmResponse{ .hello = .{} }) catch return null;
+        return jsonStringifyC(GdmResponse{ .hello = .{} });
     } else if (std.mem.eql(u8, tp, "request")) {
         const is_ui_caps = blk: {
             const req = switch (root_obj.get("request") orelse .null) {
@@ -317,15 +336,15 @@ fn handleGdmJson(
             };
         };
         if (is_ui_caps) {
-            jw.write(GdmResponse{ .response = .{} }) catch return null;
+            return jsonStringifyC(GdmResponse{ .response = .{} });
         } else {
-            jw.write(GdmResponse{ .eventAck = {} }) catch return null;
+            return jsonStringifyC(GdmResponse{ .eventAck = {} });
         }
     } else if (std.mem.eql(u8, tp, "event")) {
         const event_obj = switch (root_obj.get("event") orelse .null) {
             .object => |o| o,
-            // Empty map; no elements → no allocation → no leak.
-            else => std.json.ObjectMap.empty,
+            // No event object → nothing to process, reply with eventAck.
+            else => return jsonStringifyC(GdmResponse{ .eventAck = {} }),
         };
         const etype: []const u8 = switch (event_obj.get("type") orelse .null) {
             .string => |s| s,
@@ -342,7 +361,7 @@ fn handleGdmJson(
             const infos_val = event_obj.get("brokersInfos") orelse .null;
             if (infos_val == .array) {
                 const BrokerInfo = struct { id: []const u8, name: []const u8 };
-                var brokers: std.ArrayList(BrokerInfo) = .empty;
+                var brokers: std.ArrayListUnmanaged(BrokerInfo) = .{ .items = &.{}, .capacity = 0 };
                 defer brokers.deinit(std.heap.c_allocator);
                 for (infos_val.array.items) |b| {
                     const bo = switch (b) {
@@ -362,10 +381,9 @@ fn handleGdmJson(
                         .{ .id = id, .name = name },
                     ) catch continue;
                 }
-                if (std.json.Stringify.valueAlloc(
+                if (jsonStringifyAllocBytes(
                     std.heap.c_allocator,
                     brokers.items,
-                    .{},
                 ) catch null) |bytes|
                     commSend(types.CommMsg.brokers, bytes);
             }
@@ -376,7 +394,7 @@ fn handleGdmJson(
                     id: []const u8,
                     label: []const u8,
                 };
-                var modes: std.ArrayList(AuthModeInfo) = .empty;
+                var modes: std.ArrayListUnmanaged(AuthModeInfo) = .{ .items = &.{}, .capacity = 0 };
                 defer modes.deinit(std.heap.c_allocator);
                 for (modes_val.array.items) |m| {
                     const mo = switch (m) {
@@ -396,19 +414,17 @@ fn handleGdmJson(
                         .{ .id = id, .label = label },
                     ) catch continue;
                 }
-                if (std.json.Stringify.valueAlloc(
+                if (jsonStringifyAllocBytes(
                     std.heap.c_allocator,
                     modes.items,
-                    .{},
                 ) catch null) |bytes|
                     commSend(types.CommMsg.auth_modes, bytes);
             }
         } else if (std.mem.eql(u8, etype, "uiLayoutReceived")) {
             const layout_val = event_obj.get("uiLayout") orelse .null;
-            if (std.json.Stringify.valueAlloc(
+            if (jsonStringifyAllocBytes(
                 std.heap.c_allocator,
                 layout_val,
-                .{},
             ) catch null) |bytes|
                 commSend(types.CommMsg.ui_layout, bytes);
         } else if (std.mem.eql(u8, etype, "stageChanged")) {
@@ -455,10 +471,9 @@ fn handleGdmJson(
             );
         } else if (std.mem.eql(u8, etype, "authEvent")) {
             const ev_resp = event_obj.get("response") orelse .null;
-            if (std.json.Stringify.valueAlloc(
+            if (jsonStringifyAllocBytes(
                 std.heap.c_allocator,
                 ev_resp,
-                .{},
             ) catch null) |bytes| {
                 const access_str: []const u8 = switch (ev_resp) {
                     .object => |o| switch (o.get("access") orelse .null) {
@@ -477,7 +492,7 @@ fn handleGdmJson(
             }
         }
         // All event subtypes reply with eventAck.
-        jw.write(GdmResponse{ .eventAck = {} }) catch return null;
+        return jsonStringifyC(GdmResponse{ .eventAck = {} });
     } else if (std.mem.eql(u8, tp, "poll")) {
         if (!state.user_selected_sent) {
             state.pending[state.pending_count] = GdmEvent{
@@ -597,13 +612,10 @@ fn handleGdmJson(
         const events = state.pending[0..state.pending_count];
         state.pending_count = 0;
         defer for (events) |e| e.deinit();
-        jw.write(GdmResponse{ .pollResponse = events }) catch return null;
+        return jsonStringifyC(GdmResponse{ .pollResponse = events });
     } else {
-        jw.write(GdmResponse{ .eventAck = {} }) catch return null;
+        return jsonStringifyC(GdmResponse{ .eventAck = {} });
     }
-
-    const result = aw.toOwnedSliceSentinel(0) catch return null;
-    return result.ptr;
 }
 
 /// PAM conversation callback.  Handles password prompts, GDM binary

@@ -56,7 +56,7 @@ jobs:
             build-essential \
             debhelper \
             dpkg-dev \
-            fish \
+            libaudit-dev \
             libcairo2-dev \
             libcjson-dev \
             libgdk-pixbuf-2.0-dev \
@@ -65,11 +65,10 @@ jobs:
             libwayland-bin \
             libwayland-dev \
             libxkbcommon-dev \
-            meson \
-            ninja-build \
             pkgconf \
             scdoc \
-            wayland-protocols
+            wayland-protocols \
+            zig
 
       - name: Build package
         env:

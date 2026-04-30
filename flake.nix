@@ -35,17 +35,13 @@
             hardeningDisable = [ "fortify" ];
 
             nativeBuildInputs = with pkgs; [
-              zig
-              meson
-              ninja
+              zig_0_14
               pkg-config
               wayland-scanner
               scdoc
               git
               clang-tools
             ];
-
-            WL_PROTOCOLS_PKGDATADIR = "${pkgs.wayland-protocols}/share/wayland-protocols";
 
             buildInputs = with pkgs; [
               wayland

@@ -34,7 +34,7 @@ lxc exec "$CONTAINER" -- apt-get install -y --no-install-recommends \
 	build-essential \
 	debhelper \
 	dpkg-dev \
-	fish \
+	libaudit-dev \
 	libcairo2-dev \
 	libcjson-dev \
 	libgdk-pixbuf-2.0-dev \
@@ -43,11 +43,10 @@ lxc exec "$CONTAINER" -- apt-get install -y --no-install-recommends \
 	libwayland-bin \
 	libwayland-dev \
 	libxkbcommon-dev \
-	meson \
-	ninja-build \
 	pkgconf \
 	scdoc \
-	wayland-protocols
+	wayland-protocols \
+	zig
 
 echo "Copying source into container..."
 tar -C "$SCRIPT_DIR" \

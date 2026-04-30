@@ -39,13 +39,21 @@ pub fn build(b: *std.Build) void {
         []const u8,
         "sysconfdir",
         "System config directory",
-    ) orelse b.graph.environ_map.get("SYSCONFDIR") orelse "/etc";
+    ) orelse "/etc";
 
     const wl_proto_dir = b.option(
         []const u8,
         "wl-proto-dir",
         "wayland-protocols pkgdatadir",
-    ) orelse b.graph.environ_map.get("WL_PROTOCOLS_PKGDATADIR") orelse "/usr/share/wayland-protocols";
+    ) orelse std.mem.trim(
+        u8,
+        b.run(&.{
+            "pkg-config",
+            "--variable=pkgdatadir",
+            "wayland-protocols",
+        }),
+        " \t\n\r",
+    );
 
     // Generate ext-session-lock-v1 protocol glue via wayland-scanner.
     const ext_lock_xml = b.fmt(
@@ -72,7 +80,7 @@ pub fn build(b: *std.Build) void {
 
     // Query pkg-config for system include paths at configure time.
     // The list of packages varies with enabled features.
-    var pc_args: std.ArrayList([]const u8) = .empty;
+    var pc_args: std.ArrayListUnmanaged([]const u8) = .{ .items = &.{}, .capacity = 0 };
     pc_args.appendSlice(
         b.allocator,
         &.{ "pkg-config", "--cflags-only-I" },
@@ -93,7 +101,7 @@ pub fn build(b: *std.Build) void {
     );
 
     // Parse whitespace-separated -I flags from pkg-config output.
-    var sys_includes: std.ArrayList([]const u8) = .empty;
+    var sys_includes: std.ArrayListUnmanaged([]const u8) = .{ .items = &.{}, .capacity = 0 };
     var pc_tok = std.mem.tokenizeAny(u8, pc_raw, " \t\n\r");
     while (pc_tok.next()) |flag| {
         const f = std.mem.trim(u8, flag, " \t\n\r");
@@ -104,7 +112,7 @@ pub fn build(b: *std.Build) void {
     // Full C flags: system includes first, then compile flags and
     // feature defines. include/config.h provides #ifndef-guarded
     // defaults; the -D flags here take precedence.
-    var flags: std.ArrayList([]const u8) = .empty;
+    var flags: std.ArrayListUnmanaged([]const u8) = .{ .items = &.{}, .capacity = 0 };
     flags.appendSlice(b.allocator, sys_includes.items) catch @panic("OOM");
     flags.appendSlice(b.allocator, &.{
         "-std=c11",
@@ -147,7 +155,7 @@ pub fn build(b: *std.Build) void {
     const c_flags = flags.toOwnedSlice(b.allocator) catch @panic("OOM");
 
     // Protocol glue only needs basic flags, no feature defines.
-    var proto_flags_list: std.ArrayList([]const u8) = .empty;
+    var proto_flags_list: std.ArrayListUnmanaged([]const u8) = .{ .items = &.{}, .capacity = 0 };
     proto_flags_list.appendSlice(
         b.allocator,
         sys_includes.items,

@@ -238,19 +238,19 @@ pub const SwaylockPassword = struct {
 // ── Authd types ───────────────────────────────────────────────────
 
 /// An authd authentication broker (id + display name).
-pub const AuthdBroker = struct {
+pub const AuthdBroker = extern struct {
     id: [*c]u8,
     name: [*c]u8,
 };
 
 /// An authd authentication mode (id + display label).
-pub const AuthdAuthMode = struct {
+pub const AuthdAuthMode = extern struct {
     id: [*c]u8,
     label: [*c]u8,
 };
 
 /// UI layout descriptor sent by the authd broker.
-pub const AuthdUiLayout = struct {
+pub const AuthdUiLayout = extern struct {
     type: [*c]u8,
     label: [*c]u8,
     button: [*c]u8,

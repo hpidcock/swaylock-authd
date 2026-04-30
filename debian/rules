@@ -1,17 +1,34 @@
 #!/usr/bin/make -f
 
+ZIG_FLAGS =
+
+ifneq (,$(filter true,$(DEBUG_OVERLAY)))
+ZIG_FLAGS += -Ddebug-overlay=true
+endif
+
 %:
 	dh $@
 
 override_dh_auto_configure:
-	dh_auto_configure -- \
-		-Dpam=enabled \
-		-Dgdk-pixbuf=enabled \
-		-Dman-pages=enabled \
-		-Dzsh-completions=true \
-		-Dbash-completions=true \
-		-Dfish-completions=true \
-		$(if $(filter true,$(DEBUG_OVERLAY)),-Ddebug-overlay=true -Ddebug=true -Doptimization=0)
+
+override_dh_auto_build:
+	scdoc < swaylock.1.scd > swaylock.1
+
+override_dh_auto_test:
+
+override_dh_auto_install:
+	zig build $(ZIG_FLAGS) \
+		-Dpam=true \
+		-Dgdk-pixbuf=true \
+		--prefix $(CURDIR)/debian/swaylock/usr
+	install -Dm644 swaylock.1 \
+		$(CURDIR)/debian/swaylock/usr/share/man/man1/swaylock.1
+	install -Dm644 completions/bash/swaylock \
+		$(CURDIR)/debian/swaylock/usr/share/bash-completion/completions/swaylock
+	install -Dm644 completions/zsh/_swaylock \
+		$(CURDIR)/debian/swaylock/usr/share/zsh/vendor-completions/_swaylock
+	install -Dm644 completions/fish/swaylock.fish \
+		$(CURDIR)/debian/swaylock/usr/share/fish/vendor_completions.d/swaylock.fish
 
 override_dh_strip:
 	$(if $(filter true,$(DEBUG_OVERLAY)),true,dh_strip)

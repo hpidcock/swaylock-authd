@@ -4,8 +4,7 @@ Priority: optional
 Maintainer: Debian Sway Maintainers <team+sway@tracker.debian.org>
 Build-Depends:
  debhelper-compat (= 13),
- meson (>= 0.59),
- ninja-build,
+ zig (>= 0.14.0),
  pkgconf,
  libwayland-dev (>= 1.20),
  wayland-protocols (>= 1.25),
@@ -13,6 +12,7 @@ Build-Depends:
  libxkbcommon-dev,
  libcairo2-dev,
  libgdk-pixbuf-2.0-dev,
+ libaudit-dev,
  libpam0g-dev,
  libcjson-dev,
  libqrencode-dev,
