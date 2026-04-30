@@ -2,6 +2,11 @@ name: Release
 
 on:
   workflow_dispatch:
+    inputs:
+      debug_overlay:
+        description: "Enable debug overlay"
+        type: boolean
+        default: false
 
 jobs:
   build-deb:
@@ -32,10 +37,17 @@ jobs:
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Set package version
+        env:
+          DEBUG_OVERLAY: ${{ inputs.debug_overlay }}
         run: |
           short_sha=$(git rev-parse --short HEAD)
           version=$(sed -n '1s/^swaylock (\([^)]*\)).*/\1/p' debian/changelog)
-          sed -i "s/^swaylock (${version})/swaylock (${version}+g${short_sha})/" debian/changelog
+          if [ "$DEBUG_OVERLAY" = "true" ]; then
+            new_version="${version}+dbg+g${short_sha}"
+          else
+            new_version="${version}+g${short_sha}"
+          fi
+          sed -i "s/^swaylock (${version})/swaylock (${new_version})/" debian/changelog
 
       - name: Install build dependencies
         run: |
@@ -60,6 +72,8 @@ jobs:
             wayland-protocols
 
       - name: Build package
+        env:
+          DEBUG_OVERLAY: ${{ inputs.debug_overlay }}
         run: dpkg-buildpackage -us -uc -b
 
       - name: Collect artifacts
@@ -73,11 +87,17 @@ jobs:
       - name: Create release and upload artifacts
         env:
           GH_TOKEN: ${{ github.token }}
+          DEBUG_OVERLAY: ${{ inputs.debug_overlay }}
         run: |
           short_sha=$(git rev-parse --short HEAD)
           version=$(dpkg-parsechangelog --show-field Version)
+          prerelease=""
+          if [ "$DEBUG_OVERLAY" = "true" ]; then
+            prerelease="--prerelease"
+          fi
           gh release create "$short_sha" \
             --repo "${{ github.repository }}" \
             --title "${version} (${short_sha})" \
             --generate-notes \
+            $prerelease \
             artifacts/*

@@ -10,7 +10,11 @@ override_dh_auto_configure:
 		-Dman-pages=enabled \
 		-Dzsh-completions=true \
 		-Dbash-completions=true \
-		-Dfish-completions=true
+		-Dfish-completions=true \
+		$(if $(filter true,$(DEBUG_OVERLAY)),-Ddebug-overlay=true -Dbuildtype=debug)
+
+override_dh_strip:
+	$(if $(filter true,$(DEBUG_OVERLAY)),true,dh_strip)
 
 override_dh_fixperms:
 	dh_fixperms -Xswaylock
