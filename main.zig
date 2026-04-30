@@ -20,63 +20,24 @@ const c = @cImport({
     @cInclude("wordexp.h");
 });
 
-const types = @import("types");
+const types = @import("types.zig");
 const wl = types.c;
 const log_err: i32 = @intFromEnum(types.LogImportance.err);
 const log_info: i32 = @intFromEnum(types.LogImportance.info);
 const log_debug: i32 = @intFromEnum(types.LogImportance.debug);
 
-const log = @import("log");
-const background_image = @import("background_image");
+const log = @import("log.zig");
+const background_image = @import("background-image.zig");
 
-const loop = @import("loop");
-const comm = @import("comm");
+const loop = @import("loop.zig");
+const comm = @import("comm.zig");
+const pool_buffer = @import("pool-buffer.zig");
+const render_mod = @import("render.zig");
+const seat_mod = @import("seat.zig");
+const password_mod = @import("password.zig");
+const password_buffer = @import("password_buffer.zig");
 
-// Pool-buffer functions.
-extern fn get_next_buffer(
-    shm: ?*wl.wl_shm,
-    pool: [*]types.PoolBuffer,
-    width: u32,
-    height: u32,
-) ?*types.PoolBuffer;
-extern fn create_buffer(
-    shm: ?*wl.wl_shm,
-    buf: *types.PoolBuffer,
-    width: i32,
-    height: i32,
-    format: u32,
-) ?*types.PoolBuffer;
-extern fn destroy_buffer(buffer: *types.PoolBuffer) void;
-
-// Password functions.
-extern fn swaylock_handle_key(
-    state: *types.SwaylockState,
-    keysym: wl.xkb_keysym_t,
-    codepoint: u32,
-) void;
-extern fn schedule_auth_idle(state: *types.SwaylockState) void;
-extern fn clear_password_buffer(pw: *types.SwaylockPassword) void;
-extern fn password_buffer_create(size: usize) ?[*]u8;
-
-// Render function (defined in render.zig).
-extern fn render(surface: *types.SwaylockSurface) void;
-
-// Seat listener (exported from seat.zig).
-extern var seat_listener: wl.wl_seat_listener;
-
-// PAM/auth backend functions (from pam.zig or shadow.c).
-extern fn initialize_pw_backend(argc: c_int, argv: [*c][*c]u8) void;
-
-// Authd/PAM helpers (from pam.zig).
-extern fn authd_ui_layout_clear(layout: *types.AuthdUiLayout) void;
-extern fn authd_brokers_free(
-    brokers: [*c]types.AuthdBroker,
-    count: i32,
-) void;
-extern fn authd_auth_modes_free(
-    modes: [*c]types.AuthdAuthMode,
-    count: i32,
-) void;
+const pam_mod = @import("pam.zig");
 
 // getopt globals not always exposed by @cImport.
 extern var optarg: [*c]u8;
@@ -177,15 +138,15 @@ fn destroySurface(surface: *types.SwaylockSurface) void {
         wl.wl_surface_destroy(surface.child);
     if (surface.surface != null)
         wl.wl_surface_destroy(surface.surface);
-    destroy_buffer(&surface.indicator_buffers[0]);
-    destroy_buffer(&surface.indicator_buffers[1]);
+    pool_buffer.destroyBuffer(&surface.indicator_buffers[0]);
+    pool_buffer.destroyBuffer(&surface.indicator_buffers[1]);
     if (opts.have_debug_overlay) {
         if (surface.overlay_sub != null)
             wl.wl_subsurface_destroy(surface.overlay_sub);
         if (surface.overlay != null)
             wl.wl_surface_destroy(surface.overlay);
-        destroy_buffer(&surface.overlay_buffers[0]);
-        destroy_buffer(&surface.overlay_buffers[1]);
+        pool_buffer.destroyBuffer(&surface.overlay_buffers[0]);
+        pool_buffer.destroyBuffer(&surface.overlay_buffers[1]);
     }
     wl.wl_output_release(surface.output);
     std.heap.c_allocator.destroy(surface);
@@ -273,7 +234,7 @@ fn extSessionLockSurfaceV1HandleConfigure(
         serial,
     );
     surface.dirty = true;
-    render(surface);
+    render_mod.render(surface);
 }
 
 const ext_session_lock_surface_v1_listener: wl.struct_ext_session_lock_surface_v1_listener = .{
@@ -288,7 +249,7 @@ export fn damage_state(st: *types.SwaylockState) void {
             wlEntry(types.SwaylockSurface, "link", node.?);
         node = surface.link.next;
         surface.dirty = true;
-        render(surface);
+        render_mod.render(surface);
     }
 }
 
@@ -317,7 +278,7 @@ fn handleWlOutputGeometry(
     surface.subpixel = @intCast(subpixel);
     if (surface.state.?.run_display) {
         surface.dirty = true;
-        render(surface);
+        render_mod.render(surface);
     }
 }
 
@@ -359,7 +320,7 @@ fn handleWlOutputScale(
     surface.scale = factor;
     if (surface.state.?.run_display) {
         surface.dirty = true;
-        render(surface);
+        render_mod.render(surface);
     }
 }
 
@@ -476,7 +437,7 @@ fn handleGlobal(
         swaylock_seat.state = st;
         _ = wl.wl_seat_add_listener(
             seat,
-            &seat_listener,
+            &seat_mod.seatListener,
             swaylock_seat,
         );
     } else if (c.strcmp(
@@ -1406,14 +1367,14 @@ fn commIn(
                     .{authStateStr(state.auth_state)},
                 );
                 state.auth_state = .invalid;
-                schedule_auth_idle(&state);
+                password_mod.scheduleAuthIdle(&state);
                 state.failed_attempts += 1;
                 damage_state(&state);
             }
         },
         types.CommMsg.brokers => {
             // Parse JSON array [{id, name}, ...]
-            authd_brokers_free(
+            pam_mod.authdBrokersFree(
                 @ptrCast(state.authd_brokers),
                 state.authd_num_brokers,
             );
@@ -1433,7 +1394,7 @@ fn commIn(
         },
         types.CommMsg.auth_modes => {
             // Parse JSON array [{id, label}, ...]
-            authd_auth_modes_free(
+            pam_mod.authdAuthModesFree(
                 @ptrCast(state.authd_auth_modes),
                 state.authd_num_auth_modes,
             );
@@ -1453,7 +1414,7 @@ fn commIn(
         },
         types.CommMsg.ui_layout => {
             // Parse UILayout JSON object.
-            authd_ui_layout_clear(&state.authd_layout);
+            pam_mod.authdUiLayoutClear(&state.authd_layout);
             c.free(@ptrCast(state.authd_error));
             state.authd_error = null;
             parseUiLayout(payload_slice);
@@ -1490,7 +1451,7 @@ fn commIn(
                         },
                     );
                     state.auth_state = .invalid;
-                    schedule_auth_idle(&state);
+                    password_mod.scheduleAuthIdle(&state);
                     state.failed_attempts += 1;
                 } else {
                     log.slog(
@@ -1672,7 +1633,7 @@ fn logInit(argc: c_int, argv: [*c][*c]u8) void {
 
 export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
     logInit(argc, argv);
-    initialize_pw_backend(argc, argv);
+    pam_mod.initializePwBackend(argc, argv);
     _ = c.srand(@intCast(wl.time(null)));
 
     var line_mode: LineMode = .line;
@@ -1749,7 +1710,7 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
     state.password.len = 0;
     state.password.buffer_len = 1024;
     state.password.buffer =
-        password_buffer_create(state.password.buffer_len);
+        password_buffer.passwordBufferCreate(state.password.buffer_len);
     if (state.password.buffer == null) return c.EXIT_FAILURE;
     state.password.buffer.?[0] = 0;
 

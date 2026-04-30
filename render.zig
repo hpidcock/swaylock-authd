@@ -4,7 +4,7 @@
 const std = @import("std");
 const math = std.math;
 const opts = @import("render_options");
-const types = @import("types");
+const types = @import("types.zig");
 
 const wl = types.c;
 const qrencode = if (opts.have_qrencode) @cImport({
@@ -12,23 +12,10 @@ const qrencode = if (opts.have_qrencode) @cImport({
 }) else struct {};
 
 const log_err: i32 = @intFromEnum(types.LogImportance.err);
-const log = @import("log");
-const background_image = @import("background_image");
-const cairo_mod = @import("cairo");
-extern fn get_next_buffer(
-    shm: ?*wl.wl_shm,
-    pool: [*]types.PoolBuffer,
-    width: u32,
-    height: u32,
-) ?*types.PoolBuffer;
-extern fn create_buffer(
-    shm: ?*wl.wl_shm,
-    buffer: *types.PoolBuffer,
-    width: i32,
-    height: i32,
-    format: u32,
-) ?*types.PoolBuffer;
-extern fn destroy_buffer(buffer: *types.PoolBuffer) void;
+const log = @import("log.zig");
+const background_image = @import("background-image.zig");
+const cairo_mod = @import("cairo.zig");
+const pool_buffer = @import("pool-buffer.zig");
 
 const pi: f64 = math.pi;
 /// Angular range of the typing indicator arc.
@@ -119,7 +106,7 @@ fn render_debug_overlay(surface: *types.SwaylockSurface) void {
             surface.height * @as(u32, @intCast(surface.scale)),
         );
 
-        const buf_ptr = get_next_buffer(
+        const buf_ptr = pool_buffer.getNextBuffer(
             state.shm,
             @as([*]types.PoolBuffer, @ptrCast(&surface.overlay_buffers)),
             @intCast(buf_w),
@@ -181,7 +168,7 @@ fn render_debug_overlay(surface: *types.SwaylockSurface) void {
     }
 }
 
-export fn render(surface: *types.SwaylockSurface) void {
+pub fn render(surface: *types.SwaylockSurface) void {
     const state: *types.SwaylockState = surface.state.?;
     const bw: i32 =
         @as(i32, @intCast(surface.width)) * surface.scale;
@@ -197,7 +184,7 @@ export fn render(surface: *types.SwaylockSurface) void {
         bh != surface.last_buffer_height)
     {
         need_destroy = true;
-        if (create_buffer(
+        if (pool_buffer.createBuffer(
             state.shm,
             &buffer,
             bw,
@@ -260,7 +247,7 @@ export fn render(surface: *types.SwaylockSurface) void {
     );
     wl.wl_surface_commit(surface.surface);
 
-    if (need_destroy) destroy_buffer(&buffer);
+    if (need_destroy) pool_buffer.destroyBuffer(&buffer);
 }
 
 fn configure_font_drawing(
@@ -380,7 +367,7 @@ fn render_frame(surface: *types.SwaylockSurface) bool {
                 @divTrunc(@as(i32, @intCast(surface.height)), 2) -
                     @divTrunc(buf_h, 2 * scale);
 
-        const buf_ptr = get_next_buffer(
+        const buf_ptr = pool_buffer.getNextBuffer(
             state.shm,
             @as([*]types.PoolBuffer, @ptrCast(&surface.indicator_buffers)),
             @intCast(buf_w),
@@ -790,7 +777,7 @@ fn render_frame(surface: *types.SwaylockSurface) bool {
             @as(i32, @intFromFloat(label_box_h / fd(scale)));
     }
 
-    const buf_ptr = get_next_buffer(
+    const buf_ptr = pool_buffer.getNextBuffer(
         state.shm,
         @as([*]types.PoolBuffer, @ptrCast(&surface.indicator_buffers)),
         @intCast(buffer_width),

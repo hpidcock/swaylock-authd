@@ -1,13 +1,12 @@
-//! UTF-8 utility functions exported with a C ABI.
-//! Replaces unicode.c; consumers @cImport("unicode.h") and
-//! link against this object.
+//! UTF-8 utility functions.
+//! Replaces unicode.c.
 
 const std = @import("std");
 
 /// Returns the byte size of the last UTF-8 character in the
 /// null-terminated string str, or 0 if the string is empty.
 /// Does not validate that the buffer contains correct UTF-8.
-export fn utf8_last_size(str: [*c]const u8) i32 {
+pub fn utf8LastSize(str: [*c]const u8) i32 {
     const s = std.mem.sliceTo(str, 0);
     if (s.len == 0) return 0;
     var i: usize = s.len;
@@ -22,7 +21,7 @@ export fn utf8_last_size(str: [*c]const u8) i32 {
 
 /// Returns the number of bytes needed to encode codepoint ch
 /// as UTF-8.
-export fn utf8_chsize(ch: u32) usize {
+pub fn utf8Chsize(ch: u32) usize {
     if (ch > 0x10FFFF) return 4;
     return std.unicode.utf8CodepointSequenceLength(
         @intCast(ch),
@@ -32,7 +31,7 @@ export fn utf8_chsize(ch: u32) usize {
 /// Encodes codepoint ch as UTF-8 into str and returns the byte
 /// length. Uses std.unicode for valid codepoints; falls back to
 /// manual encoding for surrogates and out-of-range values.
-export fn utf8_encode(str: [*c]u8, ch: u32) usize {
+pub fn utf8Encode(str: [*c]u8, ch: u32) usize {
     if (ch <= 0x10FFFF) {
         var buf: [4]u8 = undefined;
         const n = std.unicode.utf8Encode(
@@ -47,7 +46,7 @@ export fn utf8_encode(str: [*c]u8, ch: u32) usize {
 
 /// Returns the byte length of the next UTF-8 character at s[0],
 /// or -1 if s[0] is a continuation byte or otherwise invalid.
-export fn utf8_size(s: [*c]const u8) i32 {
+pub fn utf8Size(s: [*c]const u8) i32 {
     const n = std.unicode.utf8ByteSequenceLength(s[0]) catch
         return -1;
     return @intCast(n);

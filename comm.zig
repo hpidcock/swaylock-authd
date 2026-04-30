@@ -2,17 +2,12 @@
 //! IPC pipes between the main swaylock process and the PAM child.
 
 const std = @import("std");
-const types = @import("types");
+const types = @import("types.zig");
 
 const log_err: i32 = @intFromEnum(types.LogImportance.err);
 
-const log = @import("log");
-
-extern fn password_buffer_create(size: usize) ?[*]u8;
-extern fn password_buffer_destroy(buffer: ?[*]u8, size: usize) void;
-extern fn clear_password_buffer(pw: *types.SwaylockPassword) void;
-
-extern fn run_pw_backend_child() void;
+const log = @import("log.zig");
+const password_buffer = @import("password_buffer.zig");
 
 /// Maximum payload size accepted from the pipe (1 MiB).
 const comm_max_payload: usize = 1 << 20;
@@ -191,25 +186,25 @@ pub fn getCommReplyFd() i32 {
 /// The password buffer is always cleared before returning.
 pub fn writeCommPassword(pw: *types.SwaylockPassword) bool {
     const size: usize = @intCast(pw.len + 1);
-    const copy = password_buffer_create(size);
+    const copy = password_buffer.passwordBufferCreate(size);
     if (copy == null) {
-        clear_password_buffer(pw);
+        password_buffer.clearPasswordBuffer(pw);
         return false;
     }
     @memcpy(copy.?[0..size], pw.buffer.?[0..size]);
-    clear_password_buffer(pw);
+    password_buffer.clearPasswordBuffer(pw);
     const ok = commWrite(
         comm_fds[0][1],
         types.CommMsg.password,
         copy,
         size,
     );
-    password_buffer_destroy(copy, size);
+    password_buffer.passwordBufferDestroy(copy, size);
     return ok;
 }
 
 /// Spawns the comm child process.
-pub fn spawnCommChild() bool {
+pub fn spawnCommChild(child_fn: *const fn () void) bool {
     const fds0 = std.posix.pipe() catch |err| {
         slogErrno(log_err, @src(), "failed to create pipe", err);
         return false;
@@ -249,8 +244,8 @@ pub fn spawnCommChild() bool {
             std.posix.dup2(devnull, 1) catch {};
             if (devnull > 1) std.posix.close(devnull);
         } else |_| {}
-        run_pw_backend_child();
-        // run_pw_backend_child calls exit(); unreachable
+        child_fn();
+        // child_fn calls exit(); unreachable
         unreachable;
     }
     std.posix.close(comm_fds[0][0]);

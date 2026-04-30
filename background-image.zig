@@ -4,20 +4,19 @@
 
 const std = @import("std");
 const opts = @import("background_image_options");
-const types = @import("types");
+const types = @import("types.zig");
 
 // No local C imports needed — cairo types come from types.c.
 const c = types.c;
 
-const log = @import("log");
+const log = @import("log.zig");
 
 const log_err: i32 = @intFromEnum(types.LogImportance.err);
 
-// Minimal hand-rolled declarations for the gdk-pixbuf/glib symbols
-// needed by loadBackgroundImage. Zig 0.16's aro C-frontend cannot
-// parse the glib pragma-heavy headers, so we avoid @cImporting them
-// and instead declare just what we need here.
-const GdkPixbuf = opaque {};
+// Reuse the GdkPixbuf opaque type from cairo.zig so that the type
+// passed to gdkCairoImageSurfaceCreateFromPixbuf is compatible.
+const cairo_mod = @import("cairo.zig");
+const GdkPixbuf = cairo_mod.GdkPixbuf;
 /// Matches struct _GError { GQuark domain; gint code; gchar *message; }
 const GError = extern struct {
     domain: u32,
@@ -31,7 +30,7 @@ extern fn gdk_pixbuf_new_from_file(
 extern fn gdk_pixbuf_apply_embedded_orientation(
     src: ?*GdkPixbuf,
 ) ?*GdkPixbuf;
-const cairo_mod = @import("cairo");
+
 extern fn g_object_unref(object: ?*anyopaque) void;
 
 /// Parses a background mode string and returns the corresponding

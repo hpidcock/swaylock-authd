@@ -4,7 +4,7 @@
 const builtin = @import("builtin");
 const opts = @import("cairo_options");
 
-const types = @import("types");
+const types = @import("types.zig");
 
 // No local C imports needed — cairo/wayland types come from types.c.
 const c = types.c;
@@ -13,7 +13,7 @@ const c = types.c;
 // by gdk_cairo_image_surface_create_from_pixbuf. Zig 0.16's aro
 // C-frontend cannot parse the glib pragma-heavy headers, so we avoid
 // @cImporting them and instead declare just what we need here.
-const GdkPixbuf = opaque {};
+pub const GdkPixbuf = opaque {};
 extern fn gdk_pixbuf_get_n_channels(
     pixbuf: ?*const GdkPixbuf,
 ) c_int;
@@ -26,7 +26,7 @@ extern fn gdk_pixbuf_get_rowstride(pixbuf: ?*const GdkPixbuf) c_int;
 
 /// Sets the Cairo source colour from a packed ARGB u32.
 /// Byte order: RRGGBBAA (most-significant byte = red).
-pub fn setSourceRGBAU32(
+pub fn cairoSetSourceU32(
     cairo: ?*c.cairo_t,
     color: u32,
 ) void {
@@ -39,8 +39,8 @@ pub fn setSourceRGBAU32(
     );
 }
 
-/// Converts a Wayland subpixel hint to the Cairo equivalent.
-pub fn toSubpixelOrder(
+/// Converts a Wayland subpixel hint to the Cairo subpixel order.
+pub fn toCairoSubpixelOrder(
     subpixel: c.wl_output_subpixel,
 ) c.cairo_subpixel_order_t {
     return switch (subpixel) {
@@ -65,7 +65,7 @@ pub const GdkExports = if (opts.have_gdk_pixbuf) struct {
     /// Creates a Cairo ARGB32 image surface from a GdkPixbuf,
     /// premultiplying alpha as required by Cairo.
     /// Returns null on failure.
-    pub fn createImageSurfaceFromPixbuf(
+    pub fn gdkCairoImageSurfaceCreateFromPixbuf(
         gdkbuf: ?*const GdkPixbuf,
     ) ?*c.cairo_surface_t {
         const buf = gdkbuf orelse return null;

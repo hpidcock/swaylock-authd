@@ -2,7 +2,7 @@
 //! A simple poll(2)-based event loop for Wayland clients.
 
 const std = @import("std");
-const types = @import("types");
+const types = @import("types.zig");
 
 // All wayland/poll/time/errno types come from types.c.
 // Only string.h is needed locally for strerror.
@@ -16,7 +16,7 @@ const wl = types.c;
 // Log verbosity shorthands.
 const log_err: i32 = @intFromEnum(types.LogImportance.err);
 
-const log = @import("log");
+const log = @import("log.zig");
 
 const alloc = std.heap.c_allocator;
 

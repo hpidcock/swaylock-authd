@@ -3,17 +3,15 @@
 //! All JSON processing uses std.json in place of cJSON.
 
 const std = @import("std");
-const types = @import("types");
+const types = @import("types.zig");
 
 const log_err: i32 = @intFromEnum(types.LogImportance.err);
 const log_info: i32 = @intFromEnum(types.LogImportance.info);
 const log_debug: i32 = @intFromEnum(types.LogImportance.debug);
 
-const log = @import("log");
-const comm = @import("comm");
-extern fn password_buffer_create(size: usize) ?[*]u8;
-extern fn password_buffer_destroy(buffer: ?[*]u8, size: usize) void;
-extern fn clear_buffer(buf: ?[*]u8, size: usize) void;
+const log = @import("log.zig");
+const comm = @import("comm.zig");
+const password_buffer = @import("password_buffer.zig");
 
 const c = @cImport({
     @cDefine("_POSIX_C_SOURCE", "200809L");
@@ -70,7 +68,7 @@ fn jsonStringifyC(v: anytype) ?[*:0]u8 {
 }
 
 /// Free all heap-allocated fields of a ui-layout and zero the struct.
-export fn authd_ui_layout_clear(layout: *types.AuthdUiLayout) void {
+pub fn authdUiLayoutClear(layout: *types.AuthdUiLayout) void {
     c.free(@ptrCast(layout.type));
     c.free(@ptrCast(layout.label));
     c.free(@ptrCast(layout.button));
@@ -81,7 +79,7 @@ export fn authd_ui_layout_clear(layout: *types.AuthdUiLayout) void {
 }
 
 /// Free a heap-allocated slice of authd_broker structs.
-export fn authd_brokers_free(
+pub fn authdBrokersFree(
     brokers: [*c]types.AuthdBroker,
     count: i32,
 ) void {
@@ -94,7 +92,7 @@ export fn authd_brokers_free(
 }
 
 /// Free a heap-allocated slice of authd_auth_mode structs.
-export fn authd_auth_modes_free(
+pub fn authdAuthModesFree(
     modes: [*c]types.AuthdAuthMode,
     count: i32,
 ) void {
@@ -546,14 +544,14 @@ fn handleGdmJson(
                         "";
                     const secret = std.heap.c_allocator.dupe(u8, raw) catch {
                         if (payload != null) {
-                            clear_buffer(payload, plen);
+                            password_buffer.clearBuffer(payload, plen);
                             c.free(@ptrCast(payload));
                         }
                         break :blk null;
                     };
                     // Clear the original credential before freeing.
                     if (payload != null) {
-                        clear_buffer(payload, plen);
+                        password_buffer.clearBuffer(payload, plen);
                         c.free(@ptrCast(payload));
                     }
                     break :blk GdmEvent{
@@ -662,7 +660,7 @@ fn handleConversation(
                 );
 
                 pam_reply[idx].resp = c.strdup(@ptrCast(payload));
-                clear_buffer(payload, len);
+                password_buffer.clearBuffer(payload, len);
                 c.free(@ptrCast(payload));
                 if (pam_reply[idx].resp == null) {
                     log.slog(log_err, @src(), "allocation failed", .{});
@@ -733,14 +731,14 @@ fn handleConversation(
 }
 
 /// Initialise the password backend; spawns the comm child process.
-export fn initialize_pw_backend(argc: c_int, argv: [*c][*c]u8) void {
+pub fn initializePwBackend(argc: c_int, argv: [*c][*c]u8) void {
     _ = argc;
     _ = argv;
-    if (!comm.spawnCommChild()) c.exit(c.EXIT_FAILURE);
+    if (!comm.spawnCommChild(runPwBackendChild)) c.exit(c.EXIT_FAILURE);
 }
 
 /// Run the PAM authentication loop in the child process.  Never returns.
-export fn run_pw_backend_child() void {
+pub fn runPwBackendChild() void {
     if (c.access("/run/authd.sock", c.F_OK) == 0)
         pam_shim_gdm_advertise_extensions();
 

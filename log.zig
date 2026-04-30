@@ -3,7 +3,7 @@
 
 const std = @import("std");
 const opts = @import("log_options");
-const types = @import("types");
+const types = @import("types.zig");
 
 // Importance levels – derived from the shared types enum.
 const log_silent: i32 = @intFromEnum(types.LogImportance.silent);

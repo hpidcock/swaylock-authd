@@ -2,15 +2,13 @@
 //! Manages the locked password buffer and keyboard input handling.
 
 const std = @import("std");
-const types = @import("types");
+const types = @import("types.zig");
 
-// Only stdlib/mmap/unistd needed locally — xkb constants come from types.c.
+// Only stdlib needed locally — xkb constants come from types.c.
 const c = @cImport({
     @cDefine("_POSIX_C_SOURCE", "200809L");
     @cDefine("_DEFAULT_SOURCE", "1");
     @cInclude("stdlib.h");
-    @cInclude("sys/mman.h");
-    @cInclude("unistd.h");
 });
 
 const wl = types.c;
@@ -18,131 +16,19 @@ const wl = types.c;
 const log_err: i32 = @intFromEnum(types.LogImportance.err);
 const log_debug: i32 = @intFromEnum(types.LogImportance.debug);
 
-const log = @import("log");
-const loop = @import("loop");
-const comm = @import("comm");
+const log = @import("log.zig");
+const loop = @import("loop.zig");
+const comm = @import("comm.zig");
+const password_buffer = @import("password_buffer.zig");
+const unicode_mod = @import("unicode.zig");
+
 extern fn damage_state(state: *types.SwaylockState) void;
-extern fn utf8_last_size(str: [*c]const u8) i32;
-extern fn utf8_chsize(ch: u32) usize;
-extern fn utf8_encode(str: [*c]u8, ch: u32) usize;
-
-// ── logging helpers ──────────────────────────────────────────────────
-
-fn slogErrno(
-    verbosity: i32,
-    src: std.builtin.SourceLocation,
-    comptime fmt: []const u8,
-) void {
-    log.slog(verbosity, src, fmt ++ ": errno {d}", .{std.c._errno().*});
-}
-
-// ── password-buffer ──────────────────────────────────────────────────
-
-var mlock_supported: bool = true;
-
-/// Expects addr to be page-aligned.
-fn passwordBufferLock(addr: [*]u8, size: usize) bool {
-    var retries: i32 = 5;
-    while (c.mlock(@ptrCast(addr), size) != 0 and retries > 0) {
-        const err = std.c._errno().*;
-        if (err == @intFromEnum(std.posix.E.AGAIN)) {
-            retries -= 1;
-            if (retries == 0) {
-                log.slog(
-                    log_err,
-                    @src(),
-                    "mlock() supported but failed too often.",
-                    .{},
-                );
-                return false;
-            }
-        } else if (err == @intFromEnum(std.posix.E.PERM)) {
-            slogErrno(
-                log_err,
-                @src(),
-                "Unable to mlock() password memory: Unsupported!",
-            );
-            mlock_supported = false;
-            return true;
-        } else {
-            slogErrno(
-                log_err,
-                @src(),
-                "Unable to mlock() password memory.",
-            );
-            return false;
-        }
-    }
-    return true;
-}
-
-/// Expects addr to be page-aligned.
-fn passwordBufferUnlock(addr: [*]u8, size: usize) bool {
-    if (mlock_supported) {
-        if (c.munlock(@ptrCast(addr), size) != 0) {
-            slogErrno(
-                log_err,
-                @src(),
-                "Unable to munlock() password memory.",
-            );
-            return false;
-        }
-    }
-    return true;
-}
-
-export fn password_buffer_create(size: usize) ?[*]u8 {
-    var buffer: ?*anyopaque = null;
-    // posix_memalign requires page-size alignment; use sysconf to
-    // retrieve the runtime page size portably.
-    const page_size: usize = @intCast(c.sysconf(c._SC_PAGESIZE));
-    const result = c.posix_memalign(
-        &buffer,
-        page_size,
-        size,
-    );
-    if (result != 0) {
-        // posix_memalign does not set errno per the man page.
-        std.c._errno().* = result;
-        slogErrno(
-            log_err,
-            @src(),
-            "failed to alloc password buffer",
-        );
-        return null;
-    }
-    const buf: [*]u8 = @ptrCast(buffer.?);
-    if (!passwordBufferLock(buf, size)) {
-        c.free(buffer);
-        return null;
-    }
-    return buf;
-}
-
-export fn password_buffer_destroy(buffer: ?[*]u8, size: usize) void {
-    clear_buffer(buffer, size);
-    _ = passwordBufferUnlock(buffer.?, size);
-    c.free(@ptrCast(buffer));
-}
-
-// ── buffer helpers ───────────────────────────────────────────────────
-
-/// Clears a buffer using volatile writes so the compiler cannot
-/// optimise the zeroing away.
-export fn clear_buffer(buf: ?[*]u8, size: usize) void {
-    const vbuf: [*]volatile u8 = @ptrCast(buf.?);
-    for (0..size) |i|
-        vbuf[i] = 0;
-}
-
-export fn clear_password_buffer(pw: *types.SwaylockPassword) void {
-    clear_buffer(pw.buffer, pw.buffer_len);
-    pw.len = 0;
-}
 
 fn backspace(pw: *types.SwaylockPassword) bool {
     if (pw.len != 0) {
-        const last: i32 = utf8_last_size(@ptrCast(pw.buffer));
+        const last: i32 = unicode_mod.utf8LastSize(
+            @ptrCast(pw.buffer),
+        );
         pw.len -= @intCast(last);
         pw.buffer.?[@intCast(pw.len)] = 0;
         return true;
@@ -151,11 +37,14 @@ fn backspace(pw: *types.SwaylockPassword) bool {
 }
 
 fn appendCh(pw: *types.SwaylockPassword, codepoint: u32) void {
-    const utf8_size: usize = utf8_chsize(codepoint);
+    const utf8_size: usize = unicode_mod.utf8Chsize(codepoint);
     const len: usize = @intCast(pw.len);
     if (len + utf8_size + 1 >= pw.buffer_len)
         return;
-    _ = utf8_encode(@ptrCast(&pw.buffer.?[len]), codepoint);
+    _ = unicode_mod.utf8Encode(
+        @ptrCast(&pw.buffer.?[len]),
+        codepoint,
+    );
     pw.buffer.?[len + utf8_size] = 0;
     pw.len += @intCast(utf8_size);
 }
@@ -200,7 +89,7 @@ fn cancelInputIdle(state: *types.SwaylockState) void {
     }
 }
 
-export fn schedule_auth_idle(state: *types.SwaylockState) void {
+pub fn scheduleAuthIdle(state: *types.SwaylockState) void {
     if (state.auth_idle_timer != null)
         _ = loop.loopRemoveTimer(
             state.eventloop.?,
@@ -219,7 +108,7 @@ fn clearPassword(data: ?*anyopaque) callconv(.c) void {
     state.clear_password_timer = null;
     state.input_state = types.InputState.clear;
     scheduleInputIdle(state);
-    clear_password_buffer(&state.password);
+    password_buffer.clearPasswordBuffer(&state.password);
     damage_state(state);
 }
 
@@ -286,7 +175,7 @@ fn submitPassword(state: *types.SwaylockState) void {
             .{},
         );
         state.auth_state = types.AuthState.invalid;
-        schedule_auth_idle(state);
+        scheduleAuthIdle(state);
     }
     damage_state(state);
 }
@@ -300,7 +189,7 @@ fn updateHighlight(state: *types.SwaylockState) void {
 
 // ── key handler ──────────────────────────────────────────────────────
 
-export fn swaylock_handle_key(
+pub fn swaylockHandleKey(
     state: *types.SwaylockState,
     keysym: wl.xkb_keysym_t,
     codepoint: u32,
@@ -390,7 +279,7 @@ export fn swaylock_handle_key(
         keysym == wl.XKB_KEY_BackSpace)
     {
         if (state.xkb.control) {
-            clear_password_buffer(&state.password);
+            password_buffer.clearPasswordBuffer(&state.password);
             state.input_state = types.InputState.clear;
             cancelPasswordClear(state);
         } else if (backspace(&state.password) and
@@ -406,7 +295,7 @@ export fn swaylock_handle_key(
         scheduleInputIdle(state);
         damage_state(state);
     } else if (keysym == wl.XKB_KEY_Escape) {
-        clear_password_buffer(&state.password);
+        password_buffer.clearPasswordBuffer(&state.password);
         state.input_state = types.InputState.clear;
         cancelPasswordClear(state);
         scheduleInputIdle(state);
@@ -435,7 +324,7 @@ export fn swaylock_handle_key(
     } else if ((keysym == wl.XKB_KEY_c or
         keysym == wl.XKB_KEY_u) and state.xkb.control)
     {
-        clear_password_buffer(&state.password);
+        password_buffer.clearPasswordBuffer(&state.password);
         state.input_state = types.InputState.clear;
         cancelPasswordClear(state);
         scheduleInputIdle(state);

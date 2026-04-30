@@ -3,7 +3,7 @@
 //! Cairo image surfaces.
 
 const std = @import("std");
-const types = @import("types");
+const types = @import("types.zig");
 
 // Only system headers here — wayland/cairo/time come from types.c.
 const c = @cImport({
@@ -71,7 +71,7 @@ const buffer_listener: wl.wl_buffer_listener = .{
 /// Creates a Wayland shared-memory buffer of the given dimensions
 /// and pixel format, populating buf in place.
 /// Returns buf on success, or null on failure.
-pub export fn create_buffer(
+pub fn createBuffer(
     shm: ?*wl.wl_shm,
     buf: *types.PoolBuffer,
     width: i32,
@@ -133,7 +133,7 @@ pub export fn create_buffer(
 }
 
 /// Releases all resources held by buffer and zeroes the struct.
-pub export fn destroy_buffer(buffer: *types.PoolBuffer) void {
+pub fn destroyBuffer(buffer: *types.PoolBuffer) void {
     if (buffer.buffer != null)
         wl.wl_buffer_destroy(buffer.buffer);
     if (buffer.cairo != null)
@@ -148,7 +148,7 @@ pub export fn destroy_buffer(buffer: *types.PoolBuffer) void {
 /// Returns a pointer to a non-busy buffer from pool[0..2],
 /// allocating or reallocating it if its dimensions have changed.
 /// Returns null if all buffers are busy or allocation fails.
-pub export fn get_next_buffer(
+pub fn getNextBuffer(
     shm: ?*wl.wl_shm,
     pool: [*]types.PoolBuffer,
     width: u32,
@@ -161,9 +161,9 @@ pub export fn get_next_buffer(
     }
     const buf = buffer orelse return null;
     if (buf.width != width or buf.height != height)
-        destroy_buffer(buf);
+        destroyBuffer(buf);
     if (buf.buffer == null) {
-        if (create_buffer(
+        if (createBuffer(
             shm,
             buf,
             @as(i32, @intCast(width)),

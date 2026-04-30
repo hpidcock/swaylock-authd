@@ -2,7 +2,7 @@
 //! Handles Wayland seat events: keyboard input and pointer cursor.
 
 const std = @import("std");
-const types = @import("types");
+const types = @import("types.zig");
 
 /// Local C imports: only sys/mman.h for mmap/munmap.
 /// All Wayland and xkbcommon types are accessed via types.c to
@@ -18,13 +18,9 @@ const wl = types.c;
 
 const log_err: i32 = @intFromEnum(types.LogImportance.err);
 
-const log = @import("log");
-const loop = @import("loop");
-extern fn swaylock_handle_key(
-    state: *types.SwaylockState,
-    keysym: types.c.xkb_keysym_t,
-    codepoint: u32,
-) void;
+const log = @import("log.zig");
+const loop = @import("loop.zig");
+const password_mod = @import("password.zig");
 extern fn damage_state(state: *types.SwaylockState) void;
 
 fn keyboardKeymap(
@@ -125,7 +121,7 @@ fn keyboardRepeat(data: ?*anyopaque) callconv(.c) void {
         keyboardRepeat,
         seat,
     );
-    swaylock_handle_key(state, seat.repeat_sym, seat.repeat_codepoint);
+    password_mod.swaylockHandleKey(state, seat.repeat_sym, seat.repeat_codepoint);
 }
 
 fn keyboardKey(
@@ -156,7 +152,7 @@ fn keyboardKey(
         keycode,
     );
     if (key_state_raw == pressed)
-        swaylock_handle_key(state, sym, codepoint);
+        password_mod.swaylockHandleKey(state, sym, codepoint);
     if (seat.repeat_timer != null) {
         _ = loop.loopRemoveTimer(
             state.eventloop.?,
@@ -421,8 +417,8 @@ fn seatHandleName(
     _ = name;
 }
 
-/// Exported seat listener; referenced from C code via seat.h.
-export var seat_listener: types.c.wl_seat_listener = .{
+/// Public seat listener; referenced from main.zig.
+pub var seatListener: types.c.wl_seat_listener = .{
     .capabilities = seatHandleCapabilities,
     .name = seatHandleName,
 };
