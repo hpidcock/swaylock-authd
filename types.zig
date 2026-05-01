@@ -31,7 +31,7 @@ pub const c = @cImport({
 // ── Background image ──────────────────────────────────────────────
 
 /// Rendering mode for background images.
-pub const BackgroundMode = enum(c_int) {
+pub const BackgroundMode = enum(i32) {
     stretch = 0,
     fill,
     fit,
@@ -137,14 +137,14 @@ pub const SwaylockSeat = struct {
 // ── Authentication state ──────────────────────────────────────────
 
 /// Status of the current authentication attempt.
-pub const AuthState = enum(c_int) {
+pub const AuthState = enum(i32) {
     idle = 0,
     validating,
     invalid,
 };
 
 /// Status of the password buffer and recent key presses.
-pub const InputState = enum(c_int) {
+pub const InputState = enum(i32) {
     idle = 0,
     clear,
     letter,
@@ -153,7 +153,7 @@ pub const InputState = enum(c_int) {
 };
 
 /// Authd multi-stage authentication step.
-pub const AuthdStage = enum(c_int) {
+pub const AuthdStage = enum(i32) {
     none = 0,
     broker,
     auth_mode,
@@ -225,13 +225,13 @@ pub const SwaylockPassword = struct {
 // ── Authd types ───────────────────────────────────────────────────
 
 /// An authd authentication broker (id + display name).
-pub const AuthdBroker = extern struct {
+pub const AuthdBroker = struct {
     id: ?[*:0]u8,
     name: ?[*:0]u8,
 };
 
 /// An authd authentication mode (id + display label).
-pub const AuthdAuthMode = extern struct {
+pub const AuthdAuthMode = struct {
     id: ?[*:0]u8,
     label: ?[*:0]u8,
 };

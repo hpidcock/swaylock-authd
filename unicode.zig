@@ -6,7 +6,7 @@ const std = @import("std");
 /// Returns the byte size of the last UTF-8 character in the
 /// null-terminated string str, or 0 if the string is empty.
 /// Does not validate that the buffer contains correct UTF-8.
-pub fn utf8LastSize(str: [*c]const u8) i32 {
+pub fn utf8LastSize(str: [*:0]const u8) i32 {
     const s = std.mem.sliceTo(str, 0);
     if (s.len == 0) return 0;
     var i: usize = s.len;
@@ -31,7 +31,7 @@ pub fn utf8Chsize(ch: u32) usize {
 /// Encodes codepoint ch as UTF-8 into str and returns the byte
 /// length. Uses std.unicode for valid codepoints; falls back to
 /// manual encoding for surrogates and out-of-range values.
-pub fn utf8Encode(str: [*c]u8, ch: u32) usize {
+pub fn utf8Encode(str: [*]u8, ch: u32) usize {
     if (ch <= 0x10FFFF) {
         var buf: [4]u8 = undefined;
         const n = std.unicode.utf8Encode(
@@ -46,7 +46,7 @@ pub fn utf8Encode(str: [*c]u8, ch: u32) usize {
 
 // Encodes ch without Unicode validation, matching the C
 // implementation for surrogates and out-of-range codepoints.
-fn encodeManual(str: [*c]u8, ch_in: u32) usize {
+fn encodeManual(str: [*]u8, ch_in: u32) usize {
     var ch = ch_in;
     var first: u8 = undefined;
     var len: usize = undefined;

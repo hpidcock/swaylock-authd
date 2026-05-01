@@ -5,18 +5,6 @@ const std = @import("std");
 const types = @import("types.zig");
 const state = @import("state.zig");
 
-/// Local C imports: only sys/mman.h for mmap/munmap.
-/// All Wayland and xkbcommon types are accessed via types.c to
-/// ensure struct layout compatibility with types.SwaylockXkb and
-/// types.SwaylockSeat.
-// Only sys/mman.h needed locally — all xkb/wayland types come from types.c.
-const c = @cImport({
-    @cDefine("_POSIX_C_SOURCE", "200809L");
-    @cInclude("sys/mman.h");
-});
-
-const wl = types.c;
-
 const log = @import("log.zig");
 const loop = @import("loop.zig");
 const password_mod = @import("password.zig");
@@ -41,19 +29,15 @@ fn keyboardKeymap(
             types.c.WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1,
         )) => {
             const shm_size: usize = @as(usize, size) - 1;
-            const raw = c.mmap(
+            const map_mem = std.posix.mmap(
                 null,
                 shm_size,
-                c.PROT_READ,
-                c.MAP_PRIVATE,
+                std.posix.PROT.READ,
+                .{ .TYPE = .PRIVATE },
                 fd,
                 0,
-            );
-            // MAP_FAILED is (void*)-1, i.e. all bits set.
-            if (raw == null or
-                @intFromPtr(raw.?) == std.math.maxInt(usize))
-            {
-                _ = std.c.close(fd);
+            ) catch {
+                std.posix.close(fd);
                 log.slog(
                     log.LogImportance.err,
                     @src(),
@@ -61,8 +45,8 @@ fn keyboardKeymap(
                     .{},
                 );
                 std.process.exit(1);
-            }
-            const map_shm: [*]const u8 = @ptrCast(raw.?);
+            };
+            const map_shm: [*]const u8 = map_mem.ptr;
             keymap = types.c.xkb_keymap_new_from_buffer(
                 g.xkb.context,
                 map_shm,
@@ -71,13 +55,15 @@ fn keyboardKeymap(
                 types.c.XKB_KEYMAP_COMPILE_NO_FLAGS,
             );
             std.debug.assert(keymap != null);
-            _ = c.munmap(@ptrCast(@constCast(map_shm)), shm_size);
+            std.posix.munmap(
+                @alignCast(map_mem[0..shm_size]),
+            );
             xkb_state = types.c.xkb_state_new(keymap);
             std.debug.assert(xkb_state != null);
         },
         else => {},
     }
-    _ = std.c.close(fd);
+    std.posix.close(fd);
     types.c.xkb_keymap_unref(g.xkb.keymap);
     types.c.xkb_state_unref(g.xkb.state);
     g.xkb.keymap = keymap;

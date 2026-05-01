@@ -4,16 +4,10 @@
 
 const std = @import("std");
 const types = @import("types.zig");
-
-const c = @cImport({
-    @cDefine("_POSIX_C_SOURCE", "200809L");
-    @cDefine("_DEFAULT_SOURCE", "1");
-    @cInclude("stdlib.h");
-    @cInclude("sys/mman.h");
-    @cInclude("unistd.h");
-});
-
 const log = @import("log.zig");
+
+extern fn mlock(addr: ?*const anyopaque, len: usize) c_int;
+extern fn munlock(addr: ?*const anyopaque, len: usize) c_int;
 
 var mlock_supported: bool = true;
 
@@ -28,7 +22,7 @@ fn slogErrno(
 /// Expects addr to be page-aligned.
 fn passwordBufferLock(addr: [*]u8, size: usize) bool {
     var retries: i32 = 5;
-    while (c.mlock(@ptrCast(addr), size) != 0 and retries > 0) {
+    while (mlock(@ptrCast(addr), size) != 0 and retries > 0) {
         const err = std.c._errno().*;
         if (err == @intFromEnum(std.posix.E.AGAIN)) {
             retries -= 1;
@@ -64,7 +58,7 @@ fn passwordBufferLock(addr: [*]u8, size: usize) bool {
 /// Expects addr to be page-aligned.
 fn passwordBufferUnlock(addr: [*]u8, size: usize) bool {
     if (mlock_supported) {
-        if (c.munlock(@ptrCast(addr), size) != 0) {
+        if (munlock(@ptrCast(addr), size) != 0) {
             slogErrno(
                 log.LogImportance.err,
                 @src(),
@@ -79,38 +73,31 @@ fn passwordBufferUnlock(addr: [*]u8, size: usize) bool {
 /// Allocates a page-aligned, mlocked buffer of the given size.
 /// Returns a pointer to the buffer on success, or null on failure.
 pub fn passwordBufferCreate(size: usize) ?[*]u8 {
-    var buffer: ?*anyopaque = null;
-    // posix_memalign requires page-size alignment; use sysconf to
-    // retrieve the runtime page size portably.
-    const page_size: usize = @intCast(c.sysconf(c._SC_PAGESIZE));
-    const result = c.posix_memalign(
-        &buffer,
-        page_size,
+    const slice = std.heap.c_allocator.alignedAlloc(
+        u8,
+        @as(u29, @intCast(std.heap.page_size_min)),
         size,
-    );
-    if (result != 0) {
-        // posix_memalign does not set errno per the man page.
-        std.c._errno().* = result;
-        slogErrno(
+    ) catch |err| {
+        log.slog(
             log.LogImportance.err,
             @src(),
-            "failed to alloc password buffer",
+            "failed to alloc password buffer: {s}",
+            .{@errorName(err)},
         );
         return null;
-    }
-    const buf: [*]u8 = @ptrCast(buffer.?);
-    if (!passwordBufferLock(buf, size)) {
-        c.free(buffer);
+    };
+    if (!passwordBufferLock(slice.ptr, size)) {
+        std.heap.c_allocator.free(slice);
         return null;
     }
-    return buf;
+    return slice.ptr;
 }
 
 /// Clears and frees a buffer previously created by passwordBufferCreate.
 pub fn passwordBufferDestroy(buffer: ?[*]u8, size: usize) void {
     clearBuffer(buffer, size);
     _ = passwordBufferUnlock(buffer.?, size);
-    c.free(@ptrCast(buffer));
+    std.heap.c_allocator.free(buffer.?[0..size]);
 }
 
 /// Clears a buffer using volatile writes so the compiler cannot

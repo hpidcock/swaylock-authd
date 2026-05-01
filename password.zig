@@ -5,13 +5,6 @@ const std = @import("std");
 const types = @import("types.zig");
 const state = @import("state.zig");
 
-// Only stdlib needed locally — xkb constants come from types.c.
-const c = @cImport({
-    @cDefine("_POSIX_C_SOURCE", "200809L");
-    @cDefine("_DEFAULT_SOURCE", "1");
-    @cInclude("stdlib.h");
-});
-
 const wl = types.c;
 
 const log = @import("log.zig");
@@ -23,7 +16,7 @@ const unicode_mod = @import("unicode.zig");
 fn backspace(pw: *types.SwaylockPassword) bool {
     if (pw.len != 0) {
         const last: i32 = unicode_mod.utf8LastSize(
-            @ptrCast(pw.buffer),
+            @ptrCast(pw.buffer.?),
         );
         pw.len -= @intCast(last);
         pw.buffer.?[@intCast(pw.len)] = 0;
@@ -38,7 +31,7 @@ fn appendCh(pw: *types.SwaylockPassword, codepoint: u32) void {
     if (len + utf8_size + 1 >= pw.buffer_len)
         return;
     _ = unicode_mod.utf8Encode(
-        @ptrCast(&pw.buffer.?[len]),
+        pw.buffer.?[len..],
         codepoint,
     );
     pw.buffer.?[len + utf8_size] = 0;
@@ -177,10 +170,9 @@ fn submitPassword(g: *types.SwaylockState) void {
 }
 
 fn updateHighlight(g: *types.SwaylockState) void {
-    // Advance a random amount between 1/4 and 3/4 of a full turn.
+    const r = std.crypto.random.int(u32) % 1024;
     g.highlight_start =
-        (g.highlight_start +
-            @as(u32, @intCast(@rem(c.rand(), 1024))) + 512) % 2048;
+        (g.highlight_start + r + 512) % 2048;
 }
 
 // ── key handler ──────────────────────────────────────────────────────

@@ -5,52 +5,38 @@
 const std = @import("std");
 const types = @import("types.zig");
 
-// Only system headers here — wayland/cairo/time come from types.c.
-const c = @cImport({
-    @cDefine("_POSIX_C_SOURCE", "200809L");
-    @cInclude("errno.h");
-    @cInclude("fcntl.h");
-    @cInclude("sys/mman.h");
-    @cInclude("unistd.h");
-});
-
 const wl = types.c;
-
-/// Returns the address of the thread-local errno variable (Linux/glibc).
-extern fn __errno_location() *c_int;
 
 /// Opens an anonymous POSIX shared-memory object by trying
 /// time-stamped names until one does not already exist.
 /// Returns a file descriptor on success, or -1 on failure.
 fn anonymous_shm_open() i32 {
+    // O_RDWR | O_CREAT | O_EXCL packed into a c_int.
+    const flags: c_int = @bitCast(@as(u32, @bitCast(
+        std.posix.O{ .ACCMODE = .RDWR, .CREAT = true, .EXCL = true },
+    )));
     var retries: i32 = 100;
     while (retries > 0) : (retries -= 1) {
-        var ts: wl.struct_timespec = undefined;
-        _ = wl.clock_gettime(wl.CLOCK_MONOTONIC, &ts);
-        const pid = c.getpid();
-        // Truncate tv_nsec to u32 without panicking on a
+        const ts = std.posix.clock_gettime(.MONOTONIC) catch continue;
+        const pid = std.c.getpid();
+        // Truncate nsec to u32 without panicking on a
         // signed-to-unsigned conversion.
         const nsec: u32 = @truncate(
-            @as(u64, @bitCast(@as(i64, ts.tv_nsec))),
+            @as(u64, @bitCast(@as(i64, ts.nsec))),
         );
         var name: [50]u8 = undefined;
         // bufPrintZ guarantees null-termination for shm_open.
-        _ = std.fmt.bufPrintZ(
+        const z = std.fmt.bufPrintZ(
             &name,
             "/swaylock-{x}-{x}",
             .{ @as(u32, @intCast(pid)), nsec },
         ) catch continue;
-        // shm_open guarantees that O_CLOEXEC is set.
-        const fd = c.shm_open(
-            @as([*c]const u8, @ptrCast(&name)),
-            c.O_RDWR | c.O_CREAT | c.O_EXCL,
-            @as(c.mode_t, 0o600),
-        );
+        const fd = std.c.shm_open(z.ptr, flags, 0o600);
         if (fd >= 0) {
-            _ = c.shm_unlink(@as([*c]const u8, @ptrCast(&name)));
+            _ = std.c.shm_unlink(z.ptr);
             return fd;
         }
-        if (__errno_location().* != c.EEXIST) break;
+        if (std.posix.errno(fd) != .EXIST) return -1;
     }
     return -1;
 }
@@ -84,18 +70,22 @@ pub fn createBuffer(
     if (size > 0) {
         const fd = anonymous_shm_open();
         if (fd == -1) return null;
-        if (c.ftruncate(fd, @as(i64, @intCast(size))) < 0) {
-            _ = c.close(fd);
+        std.posix.ftruncate(fd, @intCast(size)) catch {
+            std.posix.close(fd);
             return null;
-        }
-        data = c.mmap(
+        };
+        const mapped = std.posix.mmap(
             null,
             size,
-            c.PROT_READ | c.PROT_WRITE,
-            c.MAP_SHARED,
+            std.posix.PROT.READ | std.posix.PROT.WRITE,
+            .{ .TYPE = .SHARED },
             fd,
             0,
-        );
+        ) catch {
+            std.posix.close(fd);
+            return null;
+        };
+        data = @ptrCast(mapped);
         const pool = wl.wl_shm_create_pool(
             shm,
             fd,
@@ -115,7 +105,7 @@ pub fn createBuffer(
             @ptrCast(buf),
         );
         wl.wl_shm_pool_destroy(pool);
-        _ = c.close(fd);
+        std.posix.close(fd);
     }
     buf.size = size;
     buf.width = @as(u32, @intCast(width));
@@ -140,8 +130,11 @@ pub fn destroyBuffer(buffer: *types.PoolBuffer) void {
         wl.cairo_destroy(buffer.cairo);
     if (buffer.surface != null)
         wl.cairo_surface_destroy(buffer.surface);
-    if (buffer.data != null)
-        _ = c.munmap(buffer.data, buffer.size);
+    if (buffer.data) |d| {
+        const ptr: [*]align(std.heap.page_size_min) u8 =
+            @ptrCast(@alignCast(d));
+        std.posix.munmap(ptr[0..buffer.size]);
+    }
     buffer.* = std.mem.zeroes(types.PoolBuffer);
 }
 

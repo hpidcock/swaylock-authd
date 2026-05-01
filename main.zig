@@ -7,22 +7,6 @@ const clap = @import("clap");
 const params = @import("params.zig");
 const state = @import("state.zig");
 
-const c = @cImport({
-    @cDefine("_POSIX_C_SOURCE", "200809L");
-    @cDefine("_DEFAULT_SOURCE", "1");
-    if (opts.have_debug_overlay) @cDefine("HAVE_DEBUG_OVERLAY", "1");
-    @cInclude("errno.h");
-    @cInclude("fcntl.h");
-
-    @cInclude("signal.h");
-    @cInclude("stdio.h");
-    @cInclude("stdlib.h");
-    @cInclude("string.h");
-    @cInclude("sys/stat.h");
-    @cInclude("unistd.h");
-    @cInclude("wordexp.h");
-});
-
 const types = @import("types.zig");
 const wl = types.c;
 
@@ -53,39 +37,77 @@ fn lenientStrcmp(a: ?[*:0]const u8, b: ?[*:0]const u8) i32 {
     if (a == b) return 0;
     if (a == null) return -1;
     if (b == null) return 1;
-    return c.strcmp(@ptrCast(a), @ptrCast(b));
+    const order = std.mem.orderZ(u8, a.?, b.?);
+    return switch (order) {
+        .lt => -1,
+        .eq => 0,
+        .gt => 1,
+    };
 }
 
 fn daemonize() void {
-    var fds: [2]i32 = undefined;
-    if (c.pipe(&fds) != 0) {
-        log.slog(log.LogImportance.err, @src(), "Failed to pipe", .{});
-        c.exit(1);
-    }
-    if (c.fork() == 0) {
-        _ = c.setsid();
-        _ = c.close(fds[0]);
-        const devnull = c.open("/dev/null", c.O_RDWR);
-        _ = c.dup2(c.STDOUT_FILENO, devnull);
-        _ = c.dup2(c.STDERR_FILENO, devnull);
-        _ = c.close(devnull);
+    const fds = std.posix.pipe() catch {
+        log.slog(
+            log.LogImportance.err,
+            @src(),
+            "Failed to pipe",
+            .{},
+        );
+        std.process.exit(1);
+    };
+    const pid = std.posix.fork() catch {
+        log.slog(
+            log.LogImportance.err,
+            @src(),
+            "Failed to fork",
+            .{},
+        );
+        std.process.exit(1);
+    };
+    if (pid == 0) {
+        _ = std.os.linux.setsid();
+        std.posix.close(fds[0]);
+        const devnull = std.posix.open(
+            "/dev/null",
+            .{ .ACCMODE = .RDWR },
+            0,
+        ) catch std.process.exit(1);
+        std.posix.dup2(std.posix.STDOUT_FILENO, devnull) catch {};
+        std.posix.dup2(std.posix.STDERR_FILENO, devnull) catch {};
+        std.posix.close(devnull);
         var success: u8 = 0;
-        if (c.chdir("/") != 0) {
-            _ = c.write(fds[1], &success, 1);
-            c.exit(1);
-        }
+        std.posix.chdir("/") catch {
+            _ = std.posix.write(
+                fds[1],
+                std.mem.asBytes(&success),
+            ) catch {};
+            std.process.exit(1);
+        };
         success = 1;
-        if (c.write(fds[1], &success, 1) != 1) c.exit(1);
-        _ = c.close(fds[1]);
+        const written = std.posix.write(
+            fds[1],
+            std.mem.asBytes(&success),
+        ) catch 0;
+        if (written != 1) std.process.exit(1);
+        std.posix.close(fds[1]);
     } else {
-        _ = c.close(fds[1]);
+        std.posix.close(fds[1]);
         var success: u8 = undefined;
-        if (c.read(fds[0], &success, 1) != 1 or success == 0) {
-            log.slog(log.LogImportance.err, @src(), "Failed to daemonize", .{});
-            c.exit(1);
+        const nread = std.posix.read(
+            fds[0],
+            std.mem.asBytes(&success),
+        ) catch 0;
+        if (nread != 1 or success == 0) {
+            log.slog(
+                log.LogImportance.err,
+                @src(),
+                "Failed to daemonize",
+                .{},
+            );
+            std.process.exit(1);
         }
-        _ = c.close(fds[0]);
-        c.exit(0);
+        std.posix.close(fds[0]);
+        std.process.exit(0);
     }
 }
 
@@ -285,7 +307,10 @@ fn handleWlOutputName(
     _ = output;
     const surface: *types.SwaylockSurface =
         @ptrCast(@alignCast(data.?));
-    surface.output_name = @ptrCast(c.strdup(name));
+    surface.output_name = (std.heap.c_allocator.dupeZ(
+        u8,
+        std.mem.sliceTo(name, 0),
+    ) catch return).ptr;
 }
 
 fn handleWlOutputDescription(
@@ -334,7 +359,7 @@ fn extSessionLockV1HandleFinished(
         "Failed to lock session -- is another lockscreen running?",
         .{},
     );
-    c.exit(2);
+    std.process.exit(2);
 }
 
 const ext_session_lock_v1_listener: wl.struct_ext_session_lock_v1_listener = .{
@@ -352,31 +377,45 @@ fn handleGlobal(
     _ = version;
     const st: *types.SwaylockState =
         @ptrCast(@alignCast(data.?));
-    if (c.strcmp(interface, wl.wl_compositor_interface.name) == 0) {
+    const iface = std.mem.sliceTo(interface, 0);
+    if (std.mem.eql(
+        u8,
+        iface,
+        std.mem.sliceTo(wl.wl_compositor_interface.name, 0),
+    )) {
         st.compositor = @ptrCast(wl.wl_registry_bind(
             registry,
             name,
             &wl.wl_compositor_interface,
             4,
         ));
-    } else if (c.strcmp(
-        interface,
-        wl.wl_subcompositor_interface.name,
-    ) == 0) {
+    } else if (std.mem.eql(
+        u8,
+        iface,
+        std.mem.sliceTo(wl.wl_subcompositor_interface.name, 0),
+    )) {
         st.subcompositor = @ptrCast(wl.wl_registry_bind(
             registry,
             name,
             &wl.wl_subcompositor_interface,
             1,
         ));
-    } else if (c.strcmp(interface, wl.wl_shm_interface.name) == 0) {
+    } else if (std.mem.eql(
+        u8,
+        iface,
+        std.mem.sliceTo(wl.wl_shm_interface.name, 0),
+    )) {
         st.shm = @ptrCast(wl.wl_registry_bind(
             registry,
             name,
             &wl.wl_shm_interface,
             1,
         ));
-    } else if (c.strcmp(interface, wl.wl_seat_interface.name) == 0) {
+    } else if (std.mem.eql(
+        u8,
+        iface,
+        std.mem.sliceTo(wl.wl_seat_interface.name, 0),
+    )) {
         const se: ?*wl.wl_seat = @ptrCast(wl.wl_registry_bind(
             registry,
             name,
@@ -393,10 +432,11 @@ fn handleGlobal(
             &seat.seatListener,
             swaylock_seat,
         );
-    } else if (c.strcmp(
-        interface,
-        wl.wl_output_interface.name,
-    ) == 0) {
+    } else if (std.mem.eql(
+        u8,
+        iface,
+        std.mem.sliceTo(wl.wl_output_interface.name, 0),
+    )) {
         const surface = std.heap.c_allocator.create(
             types.SwaylockSurface,
         ) catch @panic("OOM");
@@ -418,10 +458,14 @@ fn handleGlobal(
             std.heap.c_allocator,
             surface,
         ) catch @panic("OOM");
-    } else if (c.strcmp(
-        interface,
-        wl.ext_session_lock_manager_v1_interface.name,
-    ) == 0) {
+    } else if (std.mem.eql(
+        u8,
+        iface,
+        std.mem.sliceTo(
+            wl.ext_session_lock_manager_v1_interface.name,
+            0,
+        ),
+    )) {
         st.ext_session_lock_manager_v1 =
             @ptrCast(wl.wl_registry_bind(
                 registry,
@@ -458,7 +502,7 @@ fn doSigusr(
     sig: c_int,
 ) callconv(std.builtin.CallingConvention.c) void {
     _ = sig;
-    _ = c.write(sigusr_fds[1], "1", 1);
+    _ = std.posix.write(sigusr_fds[1], "1") catch {};
 }
 
 fn debugUnlockOnExit() void {
@@ -477,7 +521,7 @@ fn debugUnlockOnCrash(
     sig: c_int,
 ) callconv(std.builtin.CallingConvention.c) void {
     debugUnlockOnExit();
-    _ = c.raise(sig);
+    std.posix.raise(@intCast(sig)) catch {};
 }
 
 fn selectImage(
@@ -618,7 +662,12 @@ fn loadConfig(
             "--{s}",
             .{trimmed},
         ) catch {
-            log.slog(log.LogImportance.err, @src(), "Failed to allocate memory", .{});
+            log.slog(
+                log.LogImportance.err,
+                @src(),
+                "Failed to allocate memory",
+                .{},
+            );
             return 0;
         };
         defer allocator.free(flag);
@@ -626,7 +675,13 @@ fn loadConfig(
             @constCast("swaylock"),
             @ptrCast(flag.ptr),
         };
-        result = params.parseOptions(2, &fake_argv, st, line_mode, null);
+        result = params.parseOptions(
+            2,
+            &fake_argv,
+            st,
+            line_mode,
+            null,
+        );
         if (result != 0) break;
     }
     return 0;
@@ -673,7 +728,7 @@ fn commIn(
             "Password checking subprocess crashed; exiting.",
             .{},
         );
-        c.exit(c.EXIT_FAILURE);
+        std.process.exit(1);
     }
     if ((mask & wl.POLLIN) == 0) {
         if ((mask & wl.POLLHUP) != 0) {
@@ -683,23 +738,23 @@ fn commIn(
                 "Password checking subprocess exited unexpectedly; exiting.",
                 .{},
             );
-            c.exit(c.EXIT_FAILURE);
+            std.process.exit(1);
         }
         return;
     }
     var payload: ?[*]u8 = null;
     var len: usize = 0;
     const msg_type = comm.commMainRead(&payload, &len);
-    defer c.free(@ptrCast(payload));
+    defer std.c.free(@ptrCast(payload));
     if (msg_type <= 0) {
-        if (msg_type == 0) c.exit(c.EXIT_FAILURE);
+        if (msg_type == 0) std.process.exit(1);
         log.slog(
             log.LogImportance.err,
             @src(),
             "comm_main_read failed; exiting.",
             .{},
         );
-        c.exit(c.EXIT_FAILURE);
+        std.process.exit(1);
     }
     log.slog(
         log.LogImportance.debug,
@@ -716,7 +771,9 @@ fn commIn(
         if (payload) |p| p[0..len] else &.{};
     switch (msg_type) {
         types.CommMsg.auth_result => {
-            if (len >= 1 and payload != null and payload.?[0] == 0x01) {
+            if (len >= 1 and payload != null and
+                payload.?[0] == 0x01)
+            {
                 log.slog(
                     log.LogImportance.debug,
                     @src(),
@@ -740,7 +797,7 @@ fn commIn(
         types.CommMsg.brokers => {
             // Parse JSON array [{id, name}, ...]
             pam_mod.authdBrokersFree(
-                @ptrCast(g.authd_brokers),
+                g.authd_brokers,
                 g.authd_num_brokers,
             );
             g.authd_brokers = null;
@@ -760,7 +817,7 @@ fn commIn(
         types.CommMsg.auth_modes => {
             // Parse JSON array [{id, label}, ...]
             pam_mod.authdAuthModesFree(
-                @ptrCast(g.authd_auth_modes),
+                g.authd_auth_modes,
                 g.authd_num_auth_modes,
             );
             g.authd_auth_modes = null;
@@ -780,7 +837,7 @@ fn commIn(
         types.CommMsg.ui_layout => {
             // Parse UILayout JSON object.
             pam_mod.authdUiLayoutClear(&g.authd_layout);
-            c.free(@ptrCast(g.authd_error));
+            std.c.free(@ptrCast(g.authd_error));
             g.authd_error = null;
             parseUiLayout(payload_slice);
             log.slog(
@@ -789,9 +846,18 @@ fn commIn(
                 "comm_in: UI_LAYOUT type={s} label={s} entry={s} " ++
                     "wait={d} auth={s} -> idle/challenge",
                 .{
-                    if (g.authd_layout.type) |t| @as([*:0]const u8, t) else "(null)",
-                    if (g.authd_layout.label) |l| @as([*:0]const u8, l) else "(null)",
-                    if (g.authd_layout.entry) |e| @as([*:0]const u8, e) else "(null)",
+                    if (g.authd_layout.type) |t|
+                        @as([*:0]const u8, t)
+                    else
+                        "(null)",
+                    if (g.authd_layout.label) |l|
+                        @as([*:0]const u8, l)
+                    else
+                        "(null)",
+                    if (g.authd_layout.entry) |e|
+                        @as([*:0]const u8, e)
+                    else
+                        "(null)",
                     @intFromBool(g.authd_layout.wait),
                     authStateStr(g.auth_state),
                 },
@@ -836,7 +902,7 @@ fn commIn(
         },
         types.CommMsg.auth_event => {
             // Intermediate result — show as error/info.
-            c.free(@ptrCast(g.authd_error));
+            std.c.free(@ptrCast(g.authd_error));
             g.authd_error = null;
             parseAuthEvent(payload_slice);
             log.slog(
@@ -844,7 +910,10 @@ fn commIn(
                 @src(),
                 "comm_in: AUTH_EVENT msg={s} auth={s} -> idle",
                 .{
-                    if (g.authd_error) |e| @as([*:0]const u8, e) else "(null)",
+                    if (g.authd_error) |e|
+                        @as([*:0]const u8, e)
+                    else
+                        "(null)",
                     authStateStr(g.auth_state),
                 },
             );
@@ -868,9 +937,10 @@ fn parseBrokers(json: []const u8) void {
     ) catch return;
     defer parsed.deinit();
     const n = @min(parsed.value.len, 256);
-    const raw = c.calloc(n, @sizeOf(types.AuthdBroker));
+    const raw = std.c.calloc(n, @sizeOf(types.AuthdBroker));
     if (raw == null) return;
-    const brokers: [*]types.AuthdBroker = @ptrCast(@alignCast(raw));
+    const brokers: [*]types.AuthdBroker =
+        @ptrCast(@alignCast(raw));
     g.authd_brokers = brokers;
     g.authd_num_brokers = @intCast(n);
     for (0..n) |i| {
@@ -893,9 +963,10 @@ fn parseAuthModes(json: []const u8) void {
     ) catch return;
     defer parsed.deinit();
     const n = @min(parsed.value.len, 256);
-    const raw = c.calloc(n, @sizeOf(types.AuthdAuthMode));
+    const raw = std.c.calloc(n, @sizeOf(types.AuthdAuthMode));
     if (raw == null) return;
-    const modes: [*]types.AuthdAuthMode = @ptrCast(@alignCast(raw));
+    const modes: [*]types.AuthdAuthMode =
+        @ptrCast(@alignCast(raw));
     g.authd_auth_modes = modes;
     g.authd_num_auth_modes = @intCast(n);
     for (0..n) |i| {
@@ -986,7 +1057,6 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
 
     logInit(argc, argv);
     pam_mod.initializePwBackend(argc, argv);
-    _ = c.srand(@intCast(wl.time(null)));
 
     var line_mode: types.LineMode = .line;
     g.failed_attempts = 0;
@@ -1002,7 +1072,12 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
     g.authd_error = null;
     g.args = std.mem.zeroes(types.SwaylockArgs);
     g.args.mode = .fill;
-    g.args.font = @ptrCast(c.strdup("sans-serif"));
+    g.args.font = @ptrCast(
+        (std.heap.c_allocator.dupeZ(
+            u8,
+            "sans-serif",
+        ) catch return 1).ptr,
+    );
     g.args.font_size = 0;
     g.args.radius = 50;
     g.args.thickness = 10;
@@ -1025,7 +1100,7 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
     var config_path_c: [*c]u8 = null;
     var result = params.parseOptions(argc, argv, null, null, &config_path_c);
     if (result != 0) {
-        if (config_path_c != null) c.free(config_path_c);
+        if (config_path_c != null) std.c.free(config_path_c);
         return result;
     }
     var config_path: ?[]u8 = null;
@@ -1044,7 +1119,7 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
         );
         const config_status = loadConfig(path, &g, &line_mode);
         if (config_status != 0) {
-            c.free(@ptrCast(g.args.font));
+            std.c.free(@ptrCast(g.args.font));
             return config_status;
         }
     }
@@ -1052,7 +1127,7 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
         log.slog(log.LogImportance.debug, @src(), "Parsing CLI Args", .{});
         result = params.parseOptions(argc, argv, &g, &line_mode, null);
         if (result != 0) {
-            c.free(@ptrCast(g.args.font));
+            std.c.free(@ptrCast(g.args.font));
             return result;
         }
     }
@@ -1066,28 +1141,42 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
     g.password.buffer_len = 1024;
     g.password.buffer =
         password_buffer.passwordBufferCreate(g.password.buffer_len);
-    if (g.password.buffer == null) return c.EXIT_FAILURE;
+    if (g.password.buffer == null) return 1;
     g.password.buffer.?[0] = 0;
 
-    if (c.pipe(@ptrCast(&sigusr_fds)) != 0) {
-        log.slog(log.LogImportance.err, @src(), "Failed to pipe", .{});
-        return c.EXIT_FAILURE;
-    }
-    if (c.fcntl(sigusr_fds[1], c.F_SETFL, c.O_NONBLOCK) == -1) {
+    const pipe_fds = std.posix.pipe() catch {
+        log.slog(
+            log.LogImportance.err,
+            @src(),
+            "Failed to pipe",
+            .{},
+        );
+        return 1;
+    };
+    sigusr_fds = pipe_fds;
+    // Set the write end of the signal pipe non-blocking so that
+    // the signal handler never blocks.
+    const nonblock: u32 =
+        @bitCast(std.posix.O{ .NONBLOCK = true });
+    _ = std.posix.fcntl(
+        sigusr_fds[1],
+        std.posix.F.SETFL,
+        @as(usize, nonblock),
+    ) catch {
         log.slog(
             log.LogImportance.err,
             @src(),
             "Failed to make pipe end nonblocking",
             .{},
         );
-        return c.EXIT_FAILURE;
-    }
+        return 1;
+    };
 
     g.xkb.context =
         types.c.xkb_context_new(types.c.XKB_CONTEXT_NO_FLAGS);
     g.display = wl.wl_display_connect(null);
     if (g.display == null) {
-        c.free(@ptrCast(g.args.font));
+        std.c.free(@ptrCast(g.args.font));
         log.slog(
             log.LogImportance.err,
             @src(),
@@ -1096,7 +1185,7 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
                 "WAYLAND_DISPLAY environment variable.",
             .{},
         );
-        return c.EXIT_FAILURE;
+        return 1;
     }
     g.eventloop = loop.loopCreate();
 
@@ -1114,7 +1203,7 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
             "wl_display_roundtrip() failed",
             .{},
         );
-        return c.EXIT_FAILURE;
+        return 1;
     }
 
     if (g.compositor == null) {
@@ -1122,7 +1211,12 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
         return 1;
     }
     if (g.subcompositor == null) {
-        log.slog(log.LogImportance.err, @src(), "Missing wl_subcompositor", .{});
+        log.slog(
+            log.LogImportance.err,
+            @src(),
+            "Missing wl_subcompositor",
+            .{},
+        );
         return 1;
     }
     if (g.shm == null) {
@@ -1188,7 +1282,7 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
     );
 
     if (wl.wl_display_roundtrip(g.display) == -1) {
-        c.free(@ptrCast(g.args.font));
+        std.c.free(@ptrCast(g.args.font));
         return 1;
     }
 
@@ -1216,7 +1310,11 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
     }
 
     if (g.args.ready_fd >= 0) {
-        if (c.write(g.args.ready_fd, "\n", 1) != 1) {
+        const nw = std.posix.write(
+            g.args.ready_fd,
+            "\n",
+        ) catch 0;
+        if (nw != 1) {
             log.slog(
                 log.LogImportance.err,
                 @src(),
@@ -1225,7 +1323,7 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
             );
             return 2;
         }
-        _ = c.close(g.args.ready_fd);
+        std.posix.close(g.args.ready_fd);
         g.args.ready_fd = -1;
     }
     if (g.args.daemonize) daemonize();
@@ -1233,21 +1331,21 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
     loop.loopAddFd(
         g.eventloop.?,
         wl.wl_display_get_fd(g.display),
-        @as(i16, @intCast(wl.POLLIN)),
+        std.posix.POLL.IN,
         displayIn,
         null,
     );
     loop.loopAddFd(
         g.eventloop.?,
         comm.getCommReplyFd(),
-        @as(i16, @intCast(wl.POLLIN)),
+        std.posix.POLL.IN,
         commIn,
         null,
     );
     loop.loopAddFd(
         g.eventloop.?,
         sigusr_fds[0],
-        @as(i16, @intCast(wl.POLLIN)),
+        std.posix.POLL.IN,
         termIn,
         null,
     );
@@ -1274,9 +1372,10 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
 
     g.run_display = true;
     while (g.run_display) {
-        c.__errno_location().* = 0;
+        std.c._errno().* = 0;
         if (wl.wl_display_flush(g.display) == -1 and
-            c.__errno_location().* != c.EAGAIN)
+            std.c._errno().* !=
+                @as(c_int, @intFromEnum(std.posix.E.AGAIN)))
         {
             break;
         }
@@ -1287,7 +1386,7 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
     g.ext_session_lock_v1 = null;
     _ = wl.wl_display_roundtrip(g.display);
 
-    c.free(@ptrCast(g.args.font));
+    std.c.free(@ptrCast(g.args.font));
     types.c.cairo_destroy(g.test_cairo);
     types.c.cairo_surface_destroy(g.test_surface);
     return 0;
