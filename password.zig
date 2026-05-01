@@ -13,6 +13,8 @@ const comm = @import("comm.zig");
 const password_buffer = @import("password_buffer.zig");
 const unicode_mod = @import("unicode.zig");
 
+const zero: []const u8 = ""[0..0];
+
 fn backspace(pw: *types.SwaylockPassword) bool {
     if (pw.len != 0) {
         const last: i32 = unicode_mod.utf8LastSize(
@@ -28,7 +30,7 @@ fn backspace(pw: *types.SwaylockPassword) bool {
 fn appendCh(pw: *types.SwaylockPassword, codepoint: u32) void {
     const utf8_size: usize = unicode_mod.utf8Chsize(codepoint);
     const len: usize = @intCast(pw.len);
-    if (len + utf8_size + 1 >= pw.buffer_len)
+    if (len + utf8_size + 1 >= pw.buffer.?.len)
         return;
     _ = unicode_mod.utf8Encode(
         pw.buffer.?[len..],
@@ -41,20 +43,20 @@ fn appendCh(pw: *types.SwaylockPassword, codepoint: u32) void {
 // ── timer callbacks ──────────────────────────────────────────────────
 
 fn setInputIdle(data: ?*anyopaque) callconv(.c) void {
-    const g: *types.SwaylockState = @ptrCast(@alignCast(data));
+    const g: *types.State = @ptrCast(@alignCast(data));
     g.input_idle_timer = null;
     g.input_state = types.InputState.idle;
     state.damageState(g);
 }
 
 fn setAuthIdle(data: ?*anyopaque) callconv(.c) void {
-    const g: *types.SwaylockState = @ptrCast(@alignCast(data));
+    const g: *types.State = @ptrCast(@alignCast(data));
     g.auth_idle_timer = null;
     g.auth_state = types.AuthState.idle;
     state.damageState(g);
 }
 
-fn scheduleInputIdle(g: *types.SwaylockState) void {
+fn scheduleInputIdle(g: *types.State) void {
     if (g.input_idle_timer != null)
         _ = loop.loopRemoveTimer(
             g.eventloop.?,
@@ -68,7 +70,7 @@ fn scheduleInputIdle(g: *types.SwaylockState) void {
     );
 }
 
-fn cancelInputIdle(g: *types.SwaylockState) void {
+fn cancelInputIdle(g: *types.State) void {
     if (g.input_idle_timer != null) {
         _ = loop.loopRemoveTimer(
             g.eventloop.?,
@@ -78,7 +80,7 @@ fn cancelInputIdle(g: *types.SwaylockState) void {
     }
 }
 
-pub fn scheduleAuthIdle(g: *types.SwaylockState) void {
+pub fn scheduleAuthIdle(g: *types.State) void {
     if (g.auth_idle_timer != null)
         _ = loop.loopRemoveTimer(
             g.eventloop.?,
@@ -93,15 +95,15 @@ pub fn scheduleAuthIdle(g: *types.SwaylockState) void {
 }
 
 fn clearPassword(data: ?*anyopaque) callconv(.c) void {
-    const g: *types.SwaylockState = @ptrCast(@alignCast(data));
+    const g: *types.State = @ptrCast(@alignCast(data));
     g.clear_password_timer = null;
     g.input_state = types.InputState.clear;
     scheduleInputIdle(g);
-    password_buffer.clearPasswordBuffer(&g.password);
+    password_buffer.clear(&g.password);
     state.damageState(g);
 }
 
-fn schedulePasswordClear(g: *types.SwaylockState) void {
+fn schedulePasswordClear(g: *types.State) void {
     if (g.clear_password_timer != null)
         _ = loop.loopRemoveTimer(
             g.eventloop.?,
@@ -115,7 +117,7 @@ fn schedulePasswordClear(g: *types.SwaylockState) void {
     );
 }
 
-fn cancelPasswordClear(g: *types.SwaylockState) void {
+fn cancelPasswordClear(g: *types.State) void {
     if (g.clear_password_timer != null) {
         _ = loop.loopRemoveTimer(
             g.eventloop.?,
@@ -127,7 +129,7 @@ fn cancelPasswordClear(g: *types.SwaylockState) void {
 
 // ── submit / highlight ───────────────────────────────────────────────
 
-fn submitPassword(g: *types.SwaylockState) void {
+fn submitPassword(g: *types.State) void {
     if (g.args.ignore_empty and g.password.len == 0) {
         log.slog(
             log.LogImportance.debug,
@@ -169,7 +171,7 @@ fn submitPassword(g: *types.SwaylockState) void {
     state.damageState(g);
 }
 
-fn updateHighlight(g: *types.SwaylockState) void {
+fn updateHighlight(g: *types.State) void {
     const r = std.crypto.random.int(u32) % 1024;
     g.highlight_start =
         (g.highlight_start + r + 512) % 2048;
@@ -178,7 +180,7 @@ fn updateHighlight(g: *types.SwaylockState) void {
 // ── key handler ──────────────────────────────────────────────────────
 
 pub fn swaylockHandleKey(
-    g: *types.SwaylockState,
+    g: *types.State,
     keysym: wl.xkb_keysym_t,
     codepoint: u32,
 ) void {
@@ -223,8 +225,7 @@ pub fn swaylockHandleKey(
                         if (id != null)
                             _ = comm.commMainWrite(
                                 types.CommMsg.broker_sel,
-                                id,
-                                std.mem.len(id.?) + 1,
+                                id.?[0 .. std.mem.len(id.?) + 1],
                             );
                     }
                 } else {
@@ -239,14 +240,16 @@ pub fn swaylockHandleKey(
                         if (id != null)
                             _ = comm.commMainWrite(
                                 types.CommMsg.auth_mode_sel,
-                                id,
-                                std.mem.len(id.?) + 1,
+                                id.?[0 .. std.mem.len(id.?) + 1],
                             );
                     }
                 }
                 return;
             } else if (keysym == wl.XKB_KEY_Escape) {
-                _ = comm.commMainWrite(types.CommMsg.cancel, null, 0);
+                _ = comm.commMainWrite(
+                    types.CommMsg.cancel,
+                    zero,
+                );
                 return;
             }
         }
@@ -254,7 +257,7 @@ pub fn swaylockHandleKey(
             if (keysym == wl.XKB_KEY_Tab and
                 g.authd_layout.button != null)
             {
-                _ = comm.commMainWrite(types.CommMsg.button, null, 0);
+                _ = comm.commMainWrite(types.CommMsg.button, zero);
                 state.damageState(g);
                 return;
             }
@@ -267,7 +270,7 @@ pub fn swaylockHandleKey(
         keysym == wl.XKB_KEY_BackSpace)
     {
         if (g.xkb.control) {
-            password_buffer.clearPasswordBuffer(&g.password);
+            password_buffer.clear(&g.password);
             g.input_state = types.InputState.clear;
             cancelPasswordClear(g);
         } else if (backspace(&g.password) and
@@ -283,7 +286,7 @@ pub fn swaylockHandleKey(
         scheduleInputIdle(g);
         state.damageState(g);
     } else if (keysym == wl.XKB_KEY_Escape) {
-        password_buffer.clearPasswordBuffer(&g.password);
+        password_buffer.clear(&g.password);
         g.input_state = types.InputState.clear;
         cancelPasswordClear(g);
         scheduleInputIdle(g);
@@ -312,7 +315,7 @@ pub fn swaylockHandleKey(
     } else if ((keysym == wl.XKB_KEY_c or
         keysym == wl.XKB_KEY_u) and g.xkb.control)
     {
-        password_buffer.clearPasswordBuffer(&g.password);
+        password_buffer.clear(&g.password);
         g.input_state = types.InputState.clear;
         cancelPasswordClear(g);
         scheduleInputIdle(g);

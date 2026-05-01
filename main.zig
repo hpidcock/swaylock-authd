@@ -24,7 +24,7 @@ const password_buffer = @import("password_buffer.zig");
 const pam_mod = @import("pam.zig");
 
 var sigusr_fds: [2]i32 = .{ -1, -1 };
-var g: types.SwaylockState = std.mem.zeroes(types.SwaylockState);
+var g: types.State = std.mem.zeroes(types.State);
 
 /// Duplicate a Zig slice into a C malloc-owned null-terminated string.
 fn dupStr(s: []const u8) ?[*:0]u8 {
@@ -111,7 +111,7 @@ fn daemonize() void {
     }
 }
 
-fn destroySurface(surface: *types.SwaylockSurface) void {
+fn destroySurface(surface: *types.Surface) void {
     if (surface.frame != null)
         wl.wl_callback_destroy(surface.frame);
     if (surface.ext_session_lock_surface_v1 != null) {
@@ -139,7 +139,7 @@ fn destroySurface(surface: *types.SwaylockSurface) void {
     std.heap.c_allocator.destroy(surface);
 }
 
-fn surfaceIsOpaque(surface: *types.SwaylockSurface) bool {
+fn surfaceIsOpaque(surface: *types.Surface) bool {
     if (surface.image != null) {
         return types.c.cairo_surface_get_content(surface.image) ==
             types.c.CAIRO_CONTENT_COLOR;
@@ -147,7 +147,7 @@ fn surfaceIsOpaque(surface: *types.SwaylockSurface) bool {
     return (surface.g.?.args.colors.background & 0xff) == 0xff;
 }
 
-fn createSurface(surface: *types.SwaylockSurface) void {
+fn createSurface(surface: *types.Surface) void {
     const st = surface.g.?;
     surface.image = selectImage(st, surface);
     surface.surface =
@@ -212,7 +212,7 @@ fn extSessionLockSurfaceV1HandleConfigure(
     width: u32,
     height: u32,
 ) callconv(std.builtin.CallingConvention.c) void {
-    const surface: *types.SwaylockSurface =
+    const surface: *types.Surface =
         @ptrCast(@alignCast(data.?));
     surface.width = width;
     surface.height = height;
@@ -248,7 +248,7 @@ fn handleWlOutputGeometry(
     _ = make;
     _ = model;
     _ = transform;
-    const surface: *types.SwaylockSurface =
+    const surface: *types.Surface =
         @ptrCast(@alignCast(data.?));
     surface.subpixel = @intCast(subpixel);
     if (surface.g.?.run_display) {
@@ -278,7 +278,7 @@ fn handleWlOutputDone(
     output: ?*wl.wl_output,
 ) callconv(std.builtin.CallingConvention.c) void {
     _ = output;
-    const surface: *types.SwaylockSurface =
+    const surface: *types.Surface =
         @ptrCast(@alignCast(data.?));
     if (!surface.created and surface.g.?.run_display)
         createSurface(surface);
@@ -290,7 +290,7 @@ fn handleWlOutputScale(
     factor: i32,
 ) callconv(std.builtin.CallingConvention.c) void {
     _ = output;
-    const surface: *types.SwaylockSurface =
+    const surface: *types.Surface =
         @ptrCast(@alignCast(data.?));
     surface.scale = factor;
     if (surface.g.?.run_display) {
@@ -305,7 +305,7 @@ fn handleWlOutputName(
     name: [*c]const u8,
 ) callconv(std.builtin.CallingConvention.c) void {
     _ = output;
-    const surface: *types.SwaylockSurface =
+    const surface: *types.Surface =
         @ptrCast(@alignCast(data.?));
     surface.output_name = (std.heap.c_allocator.dupeZ(
         u8,
@@ -337,7 +337,7 @@ fn extSessionLockV1HandleLocked(
     lock: ?*anyopaque,
 ) callconv(std.builtin.CallingConvention.c) void {
     _ = lock;
-    const st: *types.SwaylockState =
+    const st: *types.State =
         @ptrCast(@alignCast(data.?));
     st.locked = true;
 }
@@ -347,7 +347,7 @@ fn extSessionLockV1HandleFinished(
     lock: ?*anyopaque,
 ) callconv(std.builtin.CallingConvention.c) void {
     _ = lock;
-    const st: *types.SwaylockState =
+    const st: *types.State =
         @ptrCast(@alignCast(data.?));
     if (st.args.steal_unlock) {
         st.lock_failed = true;
@@ -375,7 +375,7 @@ fn handleGlobal(
     version: u32,
 ) callconv(std.builtin.CallingConvention.c) void {
     _ = version;
-    const st: *types.SwaylockState =
+    const st: *types.State =
         @ptrCast(@alignCast(data.?));
     const iface = std.mem.sliceTo(interface, 0);
     if (std.mem.eql(
@@ -423,9 +423,9 @@ fn handleGlobal(
             4,
         ));
         const swaylock_seat = std.heap.c_allocator.create(
-            types.SwaylockSeat,
+            types.Seat,
         ) catch @panic("OOM");
-        swaylock_seat.* = std.mem.zeroes(types.SwaylockSeat);
+        swaylock_seat.* = std.mem.zeroes(types.Seat);
         swaylock_seat.g = st;
         _ = wl.wl_seat_add_listener(
             se,
@@ -438,9 +438,9 @@ fn handleGlobal(
         std.mem.sliceTo(wl.wl_output_interface.name, 0),
     )) {
         const surface = std.heap.c_allocator.create(
-            types.SwaylockSurface,
+            types.Surface,
         ) catch @panic("OOM");
-        surface.* = std.mem.zeroes(types.SwaylockSurface);
+        surface.* = std.mem.zeroes(types.Surface);
         surface.g = st;
         surface.output = @ptrCast(wl.wl_registry_bind(
             registry,
@@ -482,7 +482,7 @@ fn handleGlobalRemove(
     name: u32,
 ) callconv(std.builtin.CallingConvention.c) void {
     _ = registry;
-    const st: *types.SwaylockState =
+    const st: *types.State =
         @ptrCast(@alignCast(data.?));
     for (st.surfaces.items, 0..) |surface, i| {
         if (surface.output_global_name == name) {
@@ -525,8 +525,8 @@ fn debugUnlockOnCrash(
 }
 
 fn selectImage(
-    st: *types.SwaylockState,
-    surface: *types.SwaylockSurface,
+    st: *types.State,
+    surface: *types.Surface,
 ) ?*types.c.cairo_surface_t {
     var default_image: ?*types.c.cairo_surface_t = null;
     for (st.images.items) |image| {
@@ -625,7 +625,7 @@ fn getConfigPath(allocator: std.mem.Allocator) ?[]u8 {
 
 fn loadConfig(
     path: []const u8,
-    st: *types.SwaylockState,
+    st: *types.State,
     line_mode: *types.LineMode,
 ) c_int {
     const file = std.fs.openFileAbsolute(path, .{}) catch {
@@ -1138,9 +1138,7 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
     }
 
     g.password.len = 0;
-    g.password.buffer_len = 1024;
-    g.password.buffer =
-        password_buffer.passwordBufferCreate(g.password.buffer_len);
+    g.password.buffer = password_buffer.create(1024);
     if (g.password.buffer == null) return 1;
     g.password.buffer.?[0] = 0;
 

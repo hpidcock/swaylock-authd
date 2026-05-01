@@ -144,7 +144,7 @@ const ConvState = struct {
 
 /// Send a byte slice over the IPC channel then free it.
 fn commSend(msg_type: u8, bytes: []u8) void {
-    _ = comm.commChildWrite(msg_type, bytes.ptr, bytes.len);
+    _ = comm.commChildWrite(msg_type, bytes);
     std.heap.c_allocator.free(bytes);
 }
 
@@ -419,10 +419,10 @@ fn handleGdmJson(
                     );
                 // "userSelection" → AUTHD_STAGE_NONE (default)
             }
+            const stage_byte_array: [*]const u8 = @ptrCast(&stage_byte);
             _ = comm.commChildWrite(
                 types.CommMsg.stage,
-                @ptrCast(&stage_byte),
-                @sizeOf(u8),
+                stage_byte_array[0..1],
             );
         } else if (std.mem.eql(u8, etype, "startAuthentication")) {
             log.slog(
@@ -435,10 +435,10 @@ fn handleGdmJson(
             const stage_byte: u8 = @intCast(
                 @intFromEnum(types.AuthdStage.challenge),
             );
+            const stage_byte_array: [*]const u8 = @ptrCast(&stage_byte);
             _ = comm.commChildWrite(
                 types.CommMsg.stage,
-                @ptrCast(&stage_byte),
-                @sizeOf(u8),
+                stage_byte_array[0..1],
             );
         } else if (std.mem.eql(u8, etype, "authEvent")) {
             const ev_resp = event_obj.get("response") orelse .null;
@@ -546,14 +546,14 @@ fn handleGdmJson(
                         "";
                     const secret = std.heap.c_allocator.dupe(u8, raw) catch {
                         if (payload != null) {
-                            password_buffer.clearBuffer(payload, plen);
+                            password_buffer.zero(payload.?[0..plen]);
                             std.c.free(@ptrCast(payload));
                         }
                         break :blk null;
                     };
                     // Clear the original credential before freeing.
                     if (payload != null) {
-                        password_buffer.clearBuffer(payload, plen);
+                        password_buffer.zero(payload.?[0..plen]);
                         std.c.free(@ptrCast(payload));
                     }
                     break :blk GdmEvent{
@@ -631,10 +631,10 @@ fn handleConversation(
                 const stage_byte: u8 = @intCast(
                     @intFromEnum(types.AuthdStage.challenge),
                 );
+                const stage_byte_array: [*]const u8 = @ptrCast(&stage_byte);
                 _ = comm.commChildWrite(
                     types.CommMsg.stage,
-                    @ptrCast(&stage_byte),
-                    @sizeOf(u8),
+                    stage_byte_array[0..1],
                 );
                 log.slog(
                     log.LogImportance.debug,
@@ -668,7 +668,7 @@ fn handleConversation(
                     u8,
                     pw_src,
                 ) catch null;
-                password_buffer.clearBuffer(payload, len);
+                password_buffer.zero(payload.?[0..len]);
                 std.c.free(@ptrCast(payload));
                 pam_reply[idx].resp = if (pw_copy) |d| d.ptr else null;
                 if (pam_reply[idx].resp == null) {
@@ -790,7 +790,7 @@ pub fn runPwBackendChild() void {
     while (true) {
         pam_status = c.pam_authenticate(auth_handle, 0);
         if (pam_status == c.PAM_SUCCESS) {
-            _ = comm.commChildWrite(types.CommMsg.auth_result, "\x01", 1);
+            _ = comm.commChildWrite(types.CommMsg.auth_result, "\x01"[0..1]);
         } else {
             log.slog(
                 log.LogImportance.err,
@@ -798,7 +798,7 @@ pub fn runPwBackendChild() void {
                 "pam_authenticate failed: {s}",
                 .{std.mem.span(getPamAuthError(pam_status))},
             );
-            _ = comm.commChildWrite(types.CommMsg.auth_result, "\x00", 1);
+            _ = comm.commChildWrite(types.CommMsg.auth_result, "\x00"[0..1]);
         }
         if (pam_status != c.PAM_AUTH_ERR) break;
     }

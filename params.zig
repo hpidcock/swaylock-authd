@@ -258,7 +258,7 @@ const usage =
 pub fn parseOptions(
     argc: c_int,
     argv: [*c][*c]u8,
-    st: ?*types.SwaylockState,
+    st: ?*types.State,
     line_mode: ?*types.LineMode,
     config_path: ?*[*c]u8,
 ) c_int {
@@ -610,10 +610,10 @@ fn joinArgs(argv: [*c][*c]u8, argc: i32) [*c]u8 {
     return res;
 }
 
-fn loadImage(arg: [*c]u8, st: *types.SwaylockState) void {
+fn loadImage(arg: [*c]u8, st: *types.State) void {
     const allocator = std.heap.c_allocator;
     const image = allocator.create(
-        types.SwaylockImage,
+        types.Image,
     ) catch @panic("OOM");
     image.* = .{
         .path = null,

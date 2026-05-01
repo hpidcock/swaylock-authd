@@ -129,15 +129,14 @@ fn commRead(
 fn commWrite(
     fd: i32,
     msg_type: u8,
-    payload: ?[*]const u8,
-    len: usize,
+    payload: []const u8,
 ) bool {
     if (!writeFull(fd, std.mem.asBytes(&msg_type))) return false;
     var plen_buf: [4]u8 = undefined;
-    storeLe32(&plen_buf, @intCast(len));
+    storeLe32(&plen_buf, @intCast(payload.len));
     if (!writeFull(fd, &plen_buf)) return false;
-    if (len > 0 and payload != null) {
-        if (!writeFull(fd, payload.?[0..len])) return false;
+    if (payload.len > 0) {
+        if (!writeFull(fd, payload)) return false;
     }
     return true;
 }
@@ -155,10 +154,9 @@ pub fn commChildRead(payload: *?[*]u8, len: *usize) i32 {
 /// Writes a message to the child-facing pipe.
 pub fn commChildWrite(
     msg_type: u8,
-    payload: ?[*]const u8,
-    len: usize,
+    payload: []const u8,
 ) bool {
-    return commWrite(comm_fds[1][1], msg_type, payload, len);
+    return commWrite(comm_fds[1][1], msg_type, payload);
 }
 
 /// Reads a message from the main-facing pipe.
@@ -169,10 +167,9 @@ pub fn commMainRead(payload: *?[*]u8, len: *usize) i32 {
 /// Writes a message to the main-facing pipe.
 pub fn commMainWrite(
     msg_type: u8,
-    payload: ?[*]const u8,
-    len: usize,
+    payload: []const u8,
 ) bool {
-    return commWrite(comm_fds[0][1], msg_type, payload, len);
+    return commWrite(comm_fds[0][1], msg_type, payload);
 }
 
 /// Returns the fd to poll for messages from the child.
@@ -184,20 +181,19 @@ pub fn getCommReplyFd() i32 {
 /// The password buffer is always cleared before returning.
 pub fn writeCommPassword(pw: *types.SwaylockPassword) bool {
     const size: usize = @intCast(pw.len + 1);
-    const copy = password_buffer.passwordBufferCreate(size);
+    const copy = password_buffer.create(size);
     if (copy == null) {
-        password_buffer.clearPasswordBuffer(pw);
+        password_buffer.clear(pw);
         return false;
     }
     @memcpy(copy.?[0..size], pw.buffer.?[0..size]);
-    password_buffer.clearPasswordBuffer(pw);
+    password_buffer.clear(pw);
     const ok = commWrite(
         comm_fds[0][1],
         types.CommMsg.password,
-        copy,
-        size,
+        copy.?[0..size],
     );
-    password_buffer.passwordBufferDestroy(copy, size);
+    password_buffer.destroy(copy.?[0..size]);
     return ok;
 }
 

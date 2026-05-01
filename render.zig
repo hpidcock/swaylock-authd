@@ -29,7 +29,7 @@ inline fn fd(x: anytype) f64 {
 
 fn set_color_for_state(
     cairo: ?*wl.cairo_t,
-    state: *types.SwaylockState,
+    state: *types.State,
     colorset: *types.SwaylockColorSet,
 ) void {
     if (state.input_state == types.InputState.clear) {
@@ -62,7 +62,7 @@ fn surface_frame_handle_done(
     time: u32,
 ) callconv(std.builtin.CallingConvention.c) void {
     _ = time;
-    const surface: *types.SwaylockSurface =
+    const surface: *types.Surface =
         @ptrCast(@alignCast(data));
     wl.wl_callback_destroy(callback);
     surface.frame = null;
@@ -73,12 +73,12 @@ const surface_frame_listener: wl.wl_callback_listener = .{
     .done = surface_frame_handle_done,
 };
 
-fn render_debug_overlay(surface: *types.SwaylockSurface) void {
+fn render_debug_overlay(surface: *types.Surface) void {
     // The entire body is only analysed when the overlay feature is
     // enabled; Zig does not type-check unreachable comptime branches,
-    // so the overlay-only fields on SwaylockSurface are safe here.
+    // so the overlay-only fields on Surface are safe here.
     if (comptime opts.have_debug_overlay) {
-        const state: *types.SwaylockState = surface.g.?;
+        const state: *types.State = surface.g.?;
         if (surface.width == 0 or surface.height == 0) return;
 
         var count: i32 = 0;
@@ -167,8 +167,8 @@ fn render_debug_overlay(surface: *types.SwaylockSurface) void {
     }
 }
 
-pub fn render(surface: *types.SwaylockSurface) void {
-    const state: *types.SwaylockState = surface.g.?;
+pub fn render(surface: *types.Surface) void {
+    const state: *types.State = surface.g.?;
     const bw: i32 =
         @as(i32, @intCast(surface.width)) * surface.scale;
     const bh: i32 =
@@ -253,7 +253,7 @@ pub fn render(surface: *types.SwaylockSurface) void {
 
 fn configure_font_drawing(
     cairo: ?*wl.cairo_t,
-    state: *types.SwaylockState,
+    state: *types.State,
     subpixel: wl.wl_output_subpixel,
     arc_radius: i32,
 ) void {
@@ -279,8 +279,8 @@ fn configure_font_drawing(
     }
 }
 
-fn render_frame(surface: *types.SwaylockSurface) bool {
-    const state: *types.SwaylockState = surface.g.?;
+fn render_frame(surface: *types.Surface) bool {
+    const state: *types.State = surface.g.?;
     const scale: i32 = surface.scale;
     const arc_radius: i32 =
         @as(i32, @intCast(state.args.radius)) * scale;

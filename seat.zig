@@ -17,7 +17,7 @@ fn keyboardKeymap(
     size: u32,
 ) callconv(.c) void {
     _ = wl_keyboard;
-    const seat: *types.SwaylockSeat = @ptrCast(@alignCast(data.?));
+    const seat: *types.Seat = @ptrCast(@alignCast(data.?));
     const g = seat.g.?;
     var keymap: ?*types.c.xkb_keymap = null;
     var xkb_state: ?*types.c.xkb_state = null;
@@ -97,7 +97,7 @@ fn keyboardLeave(
 }
 
 fn keyboardRepeat(data: ?*anyopaque) callconv(.c) void {
-    const seat: *types.SwaylockSeat = @ptrCast(@alignCast(data.?));
+    const seat: *types.Seat = @ptrCast(@alignCast(data.?));
     const g = seat.g.?;
     seat.repeat_timer = loop.loopAddTimer(
         g.eventloop.?,
@@ -119,7 +119,7 @@ fn keyboardKey(
     _ = wl_keyboard;
     _ = serial;
     _ = time;
-    const seat: *types.SwaylockSeat = @ptrCast(@alignCast(data.?));
+    const seat: *types.Seat = @ptrCast(@alignCast(data.?));
     const g = seat.g.?;
     if (g.xkb.state == null) return;
     const pressed = @as(
@@ -167,7 +167,7 @@ fn keyboardModifiers(
 ) callconv(.c) void {
     _ = wl_keyboard;
     _ = serial;
-    const seat: *types.SwaylockSeat = @ptrCast(@alignCast(data.?));
+    const seat: *types.Seat = @ptrCast(@alignCast(data.?));
     const g = seat.g.?;
     if (g.xkb.state == null) return;
     const layout_same = types.c.xkb_state_layout_index_is_active(
@@ -209,7 +209,7 @@ fn keyboardRepeatInfo(
     delay: i32,
 ) callconv(.c) void {
     _ = wl_keyboard;
-    const seat: *types.SwaylockSeat = @ptrCast(@alignCast(data.?));
+    const seat: *types.Seat = @ptrCast(@alignCast(data.?));
     if (rate <= 0) {
         seat.repeat_period_ms = -1;
     } else {
@@ -358,7 +358,7 @@ fn seatHandleCapabilities(
     wl_seat: ?*types.c.wl_seat,
     caps: u32,
 ) callconv(.c) void {
-    const seat: *types.SwaylockSeat = @ptrCast(@alignCast(data.?));
+    const seat: *types.Seat = @ptrCast(@alignCast(data.?));
     if (seat.pointer != null) {
         types.c.wl_pointer_release(seat.pointer);
         seat.pointer = null;

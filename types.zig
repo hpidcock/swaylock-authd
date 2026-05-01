@@ -123,8 +123,8 @@ pub const SwaylockXkb = struct {
 };
 
 /// Wayland seat: pointer, keyboard, and key-repeat parameters.
-pub const SwaylockSeat = struct {
-    g: ?*SwaylockState,
+pub const Seat = struct {
+    g: ?*State,
     pointer: ?*c.wl_pointer,
     keyboard: ?*c.wl_keyboard,
     repeat_period_ms: i32,
@@ -218,8 +218,7 @@ pub const SwaylockArgs = struct {
 /// Locked, mlock'd password accumulation buffer.
 pub const SwaylockPassword = struct {
     len: usize,
-    buffer_len: usize,
-    buffer: ?[*]u8,
+    buffer: ?[]u8,
 };
 
 // ── Authd types ───────────────────────────────────────────────────
@@ -253,7 +252,7 @@ pub const AuthdUiLayout = extern struct {
 // ── Global state ──────────────────────────────────────────────────
 
 /// Global swaylock process state (one instance per process).
-pub const SwaylockState = struct {
+pub const State = struct {
     eventloop: ?*Loop,
     input_idle_timer: ?*LoopTimer,
     auth_idle_timer: ?*LoopTimer,
@@ -263,9 +262,9 @@ pub const SwaylockState = struct {
     subcompositor: ?*c.wl_subcompositor,
     shm: ?*c.wl_shm,
     /// All per-output lock surfaces.
-    surfaces: std.ArrayListUnmanaged(*SwaylockSurface),
+    surfaces: std.ArrayListUnmanaged(*Surface),
     /// Loaded background images, one per -i argument.
-    images: std.ArrayListUnmanaged(*SwaylockImage),
+    images: std.ArrayListUnmanaged(*Image),
     args: SwaylockArgs,
     password: SwaylockPassword,
     xkb: SwaylockXkb,
@@ -299,9 +298,9 @@ pub const SwaylockState = struct {
 };
 
 /// Per-output lock surface.
-pub const SwaylockSurface = struct {
+pub const Surface = struct {
     image: ?*c.cairo_surface_t,
-    g: ?*SwaylockState,
+    g: ?*State,
     output: ?*c.wl_output,
     output_global_name: u32,
     /// Background Wayland surface.
@@ -331,7 +330,7 @@ pub const SwaylockSurface = struct {
 };
 
 /// One background image (one per -i argument).
-pub const SwaylockImage = struct {
+pub const Image = struct {
     path: ?[*:0]u8,
     output_name: ?[*:0]u8,
     cairo_surface: ?*c.cairo_surface_t,
