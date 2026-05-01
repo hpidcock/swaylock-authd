@@ -42,16 +42,6 @@ const pam_mod = @import("pam.zig");
 var sigusr_fds: [2]i32 = .{ -1, -1 };
 var g: types.SwaylockState = std.mem.zeroes(types.SwaylockState);
 
-/// Return the struct enclosing a wl_list node pointer.
-/// Accepts any pointer type to avoid cImport-namespace mismatches.
-fn wlEntry(
-    comptime T: type,
-    comptime field: []const u8,
-    node: anytype,
-) *T {
-    return @ptrFromInt(@intFromPtr(node) - @offsetOf(T, field));
-}
-
 /// Duplicate a Zig slice into a C malloc-owned null-terminated string.
 fn dupStr(s: []const u8) ?[*:0]u8 {
     const result = std.heap.c_allocator.dupeZ(u8, s) catch
@@ -102,7 +92,6 @@ fn daemonize() void {
 fn destroySurface(surface: *types.SwaylockSurface) void {
     if (surface.frame != null)
         wl.wl_callback_destroy(surface.frame);
-    wl.wl_list_remove(&surface.link);
     if (surface.ext_session_lock_surface_v1 != null) {
         wl.ext_session_lock_surface_v1_destroy(
             surface.ext_session_lock_surface_v1,
@@ -425,7 +414,10 @@ fn handleGlobal(
             &wl_output_listener,
             surface,
         );
-        wl.wl_list_insert(&st.surfaces, &surface.link);
+        st.surfaces.append(
+            std.heap.c_allocator,
+            surface,
+        ) catch @panic("OOM");
     } else if (c.strcmp(
         interface,
         wl.ext_session_lock_manager_v1_interface.name,
@@ -448,13 +440,9 @@ fn handleGlobalRemove(
     _ = registry;
     const st: *types.SwaylockState =
         @ptrCast(@alignCast(data.?));
-    const head = &st.surfaces;
-    var node = head.next;
-    while (node != head) {
-        const surface =
-            wlEntry(types.SwaylockSurface, "link", node.?);
-        node = surface.link.next;
+    for (st.surfaces.items, 0..) |surface, i| {
         if (surface.output_global_name == name) {
+            _ = st.surfaces.orderedRemove(i);
             destroySurface(surface);
             break;
         }
@@ -1092,7 +1080,6 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
         return c.EXIT_FAILURE;
     }
 
-    wl.wl_list_init(&g.surfaces);
     g.xkb.context =
         types.c.xkb_context_new(types.c.XKB_CONTEXT_NO_FLAGS);
     g.display = wl.wl_display_connect(null);
@@ -1209,12 +1196,7 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
     );
     g.test_cairo = types.c.cairo_create(g.test_surface);
 
-    const head = &g.surfaces;
-    var node = head.next;
-    while (node != head) {
-        const surface =
-            wlEntry(types.SwaylockSurface, "link", node.?);
-        node = surface.link.next;
+    for (g.surfaces.items) |surface| {
         createSurface(surface);
     }
 

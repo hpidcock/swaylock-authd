@@ -656,7 +656,7 @@ fn loadImage(arg: [*c]u8, st: *types.SwaylockState) void {
                 .{if (image.path) |p| @as([*:0]const u8, p) else "(null)"},
             );
         }
-        _ = st.images.swapRemove(idx);
+        _ = st.images.orderedRemove(idx);
         c.free(iter_image.cairo_surface);
         c.free(@ptrCast(iter_image.output_name));
         c.free(@ptrCast(iter_image.path));

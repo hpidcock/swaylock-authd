@@ -75,11 +75,12 @@ pub const TimerCallback = *const fn (
     data: ?*anyopaque,
 ) callconv(.c) void;
 
-/// Intrusive wl_list node pairing an fd with its callback.
+/// Pairs an fd with its callback and poll mask.
 pub const FdEvent = struct {
     callback: FdCallback,
     data: ?*anyopaque,
-    link: c.wl_list,
+    fd: i32,
+    mask: i16,
 };
 
 /// A one-shot timer registered in the event loop.
@@ -88,17 +89,12 @@ pub const LoopTimer = struct {
     data: ?*anyopaque,
     expiry: std.posix.timespec,
     removed: bool,
-    link: c.wl_list,
 };
 
-/// Poll-based event loop.  Owns a dynamically-sized pollfd array and
-/// two intrusive wl_lists: one for fd events and one for timers.
+/// Poll-based event loop.
 pub const Loop = struct {
-    fds: [*]std.posix.pollfd,
-    fd_length: i32,
-    fd_capacity: i32,
-    fd_events: c.wl_list,
-    timers: c.wl_list,
+    fd_events: std.ArrayListUnmanaged(FdEvent),
+    timers: std.ArrayListUnmanaged(*LoopTimer),
 };
 
 // ── Shared-memory pool buffer ─────────────────────────────────────
@@ -266,8 +262,8 @@ pub const SwaylockState = struct {
     compositor: ?*c.wl_compositor,
     subcompositor: ?*c.wl_subcompositor,
     shm: ?*c.wl_shm,
-    /// Head of the intrusive wl_list of SwaylockSurface.link nodes.
-    surfaces: c.wl_list,
+    /// All per-output lock surfaces.
+    surfaces: std.ArrayListUnmanaged(*SwaylockSurface),
     /// Loaded background images, one per -i argument.
     images: std.ArrayListUnmanaged(*SwaylockImage),
     args: SwaylockArgs,
@@ -328,8 +324,6 @@ pub const SwaylockSurface = struct {
     scale: i32,
     subpixel: c.wl_output_subpixel,
     output_name: ?[*:0]u8,
-    /// Intrusive wl_list node linked into SwaylockState.surfaces.
-    link: c.wl_list,
     frame: ?*c.wl_callback,
     /// Size of the last wl_buffer committed to the background.
     last_buffer_width: i32,
