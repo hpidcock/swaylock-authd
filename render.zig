@@ -298,9 +298,9 @@ fn render_frame(surface: *types.Surface) bool {
         const is_broker =
             state.authd_stage == types.AuthdStage.broker;
         const count: i32 = if (is_broker)
-            state.authd_num_brokers
+            @intCast(state.authd_brokers.len)
         else
-            state.authd_num_auth_modes;
+            @intCast(state.authd_auth_modes.len);
         const sel: i32 = if (is_broker)
             state.authd_sel_broker
         else
@@ -334,9 +334,9 @@ fn render_frame(surface: *types.Surface) bool {
         var mi: i32 = start;
         while (mi < start + vis_count) : (mi += 1) {
             const name: [*c]const u8 = if (is_broker)
-                state.authd_brokers.?[@intCast(mi)].name
+                state.authd_brokers[@intCast(mi)].name
             else
-                state.authd_auth_modes.?[@intCast(mi)].label;
+                state.authd_auth_modes[@intCast(mi)].label;
             var ext: wl.cairo_text_extents_t = undefined;
             wl.cairo_text_extents(
                 state.test_cairo,
@@ -396,9 +396,9 @@ fn render_frame(surface: *types.Surface) bool {
         while (vi < vis_count) : (vi += 1) {
             const idx = start + vi;
             const name: [*c]const u8 = if (is_broker)
-                state.authd_brokers.?[@intCast(idx)].name
+                state.authd_brokers[@intCast(idx)].name
             else
-                state.authd_auth_modes.?[@intCast(idx)].label;
+                state.authd_auth_modes[@intCast(idx)].label;
             const safe_name: [*c]const u8 =
                 if (name != null) name else "";
             var ext: wl.cairo_text_extents_t = undefined;

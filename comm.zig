@@ -77,23 +77,24 @@ fn storeLe32(b: *[4]u8, v: u32) void {
     b[3] = @truncate(v >> 24);
 }
 
-fn commRead(
-    fd: i32,
-    payload: *?[*]u8,
-    len: *usize,
-) i32 {
+/// Result of a comm read.
+/// When msg_type <= 0: payload is empty (0 = EOF, -1 = error).
+/// When msg_type > 0: payload is malloc-allocated; free with
+///   std.c.free(result.payload.ptr) when payload.len > 0.
+pub const CommRead = struct {
+    msg_type: i32,
+    payload: []u8,
+};
+
+fn commRead(fd: i32) CommRead {
     var msg_type: u8 = undefined;
     var n = readFull(fd, std.mem.asBytes(&msg_type));
-    if (n <= 0) {
-        payload.* = null;
-        return @intCast(n);
-    }
+    if (n <= 0)
+        return .{ .msg_type = @intCast(n), .payload = &.{} };
     var plen_buf: [4]u8 = undefined;
     n = readFull(fd, &plen_buf);
-    if (n <= 0) {
-        payload.* = null;
-        return -1;
-    }
+    if (n <= 0)
+        return .{ .msg_type = -1, .payload = &.{} };
     const plen: usize = loadLe32(&plen_buf);
     if (plen > comm_max_payload) {
         log.slog(
@@ -102,28 +103,27 @@ fn commRead(
             "comm_read: payload too large: {d}",
             .{plen},
         );
-        payload.* = null;
-        return -1;
+        return .{ .msg_type = -1, .payload = &.{} };
     }
-    var buf: ?[*]u8 = null;
-    if (plen > 0) {
-        buf = @ptrCast(std.c.malloc(plen + 1));
-        if (buf == null) {
-            log.slog(log.LogImportance.err, @src(), "allocation failed", .{});
-            payload.* = null;
-            return -1;
-        }
-        n = readFull(fd, buf.?[0..plen]);
-        if (n <= 0) {
-            std.c.free(@ptrCast(buf));
-            payload.* = null;
-            return -1;
-        }
-        buf.?[plen] = 0;
+    if (plen == 0)
+        return .{ .msg_type = msg_type, .payload = &.{} };
+    const raw = std.c.malloc(plen + 1) orelse {
+        log.slog(
+            log.LogImportance.err,
+            @src(),
+            "allocation failed",
+            .{},
+        );
+        return .{ .msg_type = -1, .payload = &.{} };
+    };
+    const buf: [*]u8 = @ptrCast(raw);
+    n = readFull(fd, buf[0..plen]);
+    if (n <= 0) {
+        std.c.free(raw);
+        return .{ .msg_type = -1, .payload = &.{} };
     }
-    payload.* = buf;
-    len.* = plen;
-    return @intCast(msg_type);
+    buf[plen] = 0;
+    return .{ .msg_type = msg_type, .payload = buf[0..plen] };
 }
 
 fn commWrite(
@@ -147,8 +147,8 @@ pub fn getCommChildFd() i32 {
 }
 
 /// Reads a message from the child-facing pipe.
-pub fn commChildRead(payload: *?[*]u8, len: *usize) i32 {
-    return commRead(comm_fds[0][0], payload, len);
+pub fn commChildRead() CommRead {
+    return commRead(comm_fds[0][0]);
 }
 
 /// Writes a message to the child-facing pipe.
@@ -160,8 +160,8 @@ pub fn commChildWrite(
 }
 
 /// Reads a message from the main-facing pipe.
-pub fn commMainRead(payload: *?[*]u8, len: *usize) i32 {
-    return commRead(comm_fds[1][0], payload, len);
+pub fn commMainRead() CommRead {
+    return commRead(comm_fds[1][0]);
 }
 
 /// Writes a message to the main-facing pipe.

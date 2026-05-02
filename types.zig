@@ -284,12 +284,10 @@ pub const State = struct {
     // authd multi-stage fields; only meaningful when authd_active.
     authd_active: bool,
     authd_stage: AuthdStage,
-    authd_brokers: ?[*]AuthdBroker,
-    authd_num_brokers: i32,
+    authd_brokers: []AuthdBroker,
     /// Index of the selected broker; -1 = nothing selected yet.
     authd_sel_broker: i32,
-    authd_auth_modes: ?[*]AuthdAuthMode,
-    authd_num_auth_modes: i32,
+    authd_auth_modes: []AuthdAuthMode,
     /// Index of the selected auth mode; -1 = nothing selected yet.
     authd_sel_auth_mode: i32,
     authd_layout: AuthdUiLayout,

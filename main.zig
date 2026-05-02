@@ -742,12 +742,10 @@ fn commIn(
         }
         return;
     }
-    var payload: ?[*]u8 = null;
-    var len: usize = 0;
-    const msg_type = comm.commMainRead(&payload, &len);
-    defer std.c.free(@ptrCast(payload));
-    if (msg_type <= 0) {
-        if (msg_type == 0) std.process.exit(1);
+    const read = comm.commMainRead();
+    defer if (read.payload.len > 0) std.c.free(read.payload.ptr);
+    if (read.msg_type <= 0) {
+        if (read.msg_type == 0) std.process.exit(1);
         log.slog(
             log.LogImportance.err,
             @src(),
@@ -761,19 +759,15 @@ fn commIn(
         @src(),
         "comm_in: msg=0x{x:0>2} len={d} auth={s} stage={s}",
         .{
-            msg_type,
-            len,
+            read.msg_type,
+            read.payload.len,
             authStateStr(g.auth_state),
             authdStageStr(g.authd_stage),
         },
     );
-    const payload_slice: []const u8 =
-        if (payload) |p| p[0..len] else &.{};
-    switch (msg_type) {
+    switch (@as(u8, @intCast(read.msg_type))) {
         types.CommMsg.auth_result => {
-            if (len >= 1 and payload != null and
-                payload.?[0] == 0x01)
-            {
+            if (read.payload.len >= 1 and read.payload[0] == 0x01) {
                 log.slog(
                     log.LogImportance.debug,
                     @src(),
@@ -796,41 +790,33 @@ fn commIn(
         },
         types.CommMsg.brokers => {
             // Parse JSON array [{id, name}, ...]
-            pam_mod.authdBrokersFree(
-                g.authd_brokers,
-                g.authd_num_brokers,
-            );
-            g.authd_brokers = null;
-            g.authd_num_brokers = 0;
+            pam_mod.authdBrokersFree(g.authd_brokers);
+            g.authd_brokers = &.{};
             g.authd_sel_broker = 0;
-            parseBrokers(payload_slice);
+            parseBrokers(read.payload);
             g.authd_active = true;
             g.authd_stage = .broker;
             log.slog(
                 log.LogImportance.debug,
                 @src(),
                 "comm_in: BROKERS n={d} -> stage=broker",
-                .{g.authd_num_brokers},
+                .{g.authd_brokers.len},
             );
             state.damageState(&g);
         },
         types.CommMsg.auth_modes => {
             // Parse JSON array [{id, label}, ...]
-            pam_mod.authdAuthModesFree(
-                g.authd_auth_modes,
-                g.authd_num_auth_modes,
-            );
-            g.authd_auth_modes = null;
-            g.authd_num_auth_modes = 0;
+            pam_mod.authdAuthModesFree(g.authd_auth_modes);
+            g.authd_auth_modes = &.{};
             g.authd_sel_auth_mode = 0;
-            parseAuthModes(payload_slice);
+            parseAuthModes(read.payload);
             g.authd_active = true;
             g.authd_stage = .auth_mode;
             log.slog(
                 log.LogImportance.debug,
                 @src(),
                 "comm_in: AUTH_MODES n={d} -> stage=auth_mode",
-                .{g.authd_num_auth_modes},
+                .{g.authd_auth_modes.len},
             );
             state.damageState(&g);
         },
@@ -839,7 +825,7 @@ fn commIn(
             pam_mod.authdUiLayoutClear(&g.authd_layout);
             std.c.free(@ptrCast(g.authd_error));
             g.authd_error = null;
-            parseUiLayout(payload_slice);
+            parseUiLayout(read.payload);
             log.slog(
                 log.LogImportance.debug,
                 @src(),
@@ -867,9 +853,9 @@ fn commIn(
             state.damageState(&g);
         },
         types.CommMsg.stage => {
-            if (len >= 1) {
+            if (read.payload.len >= 1) {
                 const new_stage: types.AuthdStage =
-                    @enumFromInt(@as(c_int, payload.?[0]));
+                    @enumFromInt(@as(c_int, read.payload[0]));
                 if (g.auth_state == .validating) {
                     log.slog(
                         log.LogImportance.debug,
@@ -904,7 +890,7 @@ fn commIn(
             // Intermediate result — show as error/info.
             std.c.free(@ptrCast(g.authd_error));
             g.authd_error = null;
-            parseAuthEvent(payload_slice);
+            parseAuthEvent(read.payload);
             log.slog(
                 log.LogImportance.debug,
                 @src(),
@@ -941,8 +927,7 @@ fn parseBrokers(json: []const u8) void {
     if (raw == null) return;
     const brokers: [*]types.AuthdBroker =
         @ptrCast(@alignCast(raw));
-    g.authd_brokers = brokers;
-    g.authd_num_brokers = @intCast(n);
+    g.authd_brokers = brokers[0..n];
     for (0..n) |i| {
         const item = parsed.value[i];
         brokers[i].id = if (item.id) |s| dupStr(s) else null;
@@ -967,8 +952,7 @@ fn parseAuthModes(json: []const u8) void {
     if (raw == null) return;
     const modes: [*]types.AuthdAuthMode =
         @ptrCast(@alignCast(raw));
-    g.authd_auth_modes = modes;
-    g.authd_num_auth_modes = @intCast(n);
+    g.authd_auth_modes = modes[0..n];
     for (0..n) |i| {
         const item = parsed.value[i];
         modes[i].id = if (item.id) |s| dupStr(s) else null;
@@ -1062,11 +1046,9 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
     g.failed_attempts = 0;
     g.authd_active = false;
     g.authd_stage = .none;
-    g.authd_brokers = null;
-    g.authd_num_brokers = 0;
+    g.authd_brokers = &.{};
     g.authd_sel_broker = -1;
-    g.authd_auth_modes = null;
-    g.authd_num_auth_modes = 0;
+    g.authd_auth_modes = &.{};
     g.authd_sel_auth_mode = -1;
     g.authd_layout = std.mem.zeroes(types.AuthdUiLayout);
     g.authd_error = null;

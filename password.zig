@@ -204,12 +204,12 @@ pub fn swaylockHandleKey(
                 return;
             } else if (keysym == wl.XKB_KEY_Down) {
                 if (is_broker) {
-                    if (g.authd_sel_broker <
-                        g.authd_num_brokers - 1)
+                    if (g.authd_sel_broker + 1 <
+                        @as(i32, @intCast(g.authd_brokers.len)))
                         g.authd_sel_broker += 1;
                 } else {
-                    if (g.authd_sel_auth_mode <
-                        g.authd_num_auth_modes - 1)
+                    if (g.authd_sel_auth_mode + 1 <
+                        @as(i32, @intCast(g.authd_auth_modes.len)))
                         g.authd_sel_auth_mode += 1;
                 }
                 state.damageState(g);
@@ -219,9 +219,11 @@ pub fn swaylockHandleKey(
             {
                 if (is_broker) {
                     const sel = g.authd_sel_broker;
-                    if (sel >= 0 and sel < g.authd_num_brokers) {
+                    if (sel >= 0 and
+                        @as(usize, @intCast(sel)) < g.authd_brokers.len)
+                    {
                         const id =
-                            g.authd_brokers.?[@intCast(sel)].id;
+                            g.authd_brokers[@intCast(sel)].id;
                         if (id != null)
                             _ = comm.commMainWrite(
                                 types.CommMsg.broker_sel,
@@ -231,12 +233,10 @@ pub fn swaylockHandleKey(
                 } else {
                     const sel = g.authd_sel_auth_mode;
                     if (sel >= 0 and
-                        sel < g.authd_num_auth_modes)
+                        @as(usize, @intCast(sel)) < g.authd_auth_modes.len)
                     {
                         const id =
-                            g.authd_auth_modes.?[
-                                @intCast(sel)
-                            ].id;
+                            g.authd_auth_modes[@intCast(sel)].id;
                         if (id != null)
                             _ = comm.commMainWrite(
                                 types.CommMsg.auth_mode_sel,

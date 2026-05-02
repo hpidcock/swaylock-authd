@@ -75,35 +75,25 @@ pub fn authdUiLayoutClear(layout: *types.AuthdUiLayout) void {
 }
 
 /// Free a heap-allocated slice of authd_broker structs.
-pub fn authdBrokersFree(
-    brokers: ?[*]types.AuthdBroker,
-    count: i32,
-) void {
-    const b = brokers orelse return;
-    var i: usize = 0;
-    while (i < @as(usize, @intCast(count))) : (i += 1) {
-        if (b[i].id) |p|
+pub fn authdBrokersFree(brokers: []types.AuthdBroker) void {
+    for (brokers) |b| {
+        if (b.id) |p|
             std.heap.c_allocator.free(std.mem.span(p));
-        if (b[i].name) |p|
+        if (b.name) |p|
             std.heap.c_allocator.free(std.mem.span(p));
     }
-    std.c.free(@ptrCast(b));
+    if (brokers.len > 0) std.c.free(brokers.ptr);
 }
 
 /// Free a heap-allocated slice of authd_auth_mode structs.
-pub fn authdAuthModesFree(
-    modes: ?[*]types.AuthdAuthMode,
-    count: i32,
-) void {
-    const m = modes orelse return;
-    var i: usize = 0;
-    while (i < @as(usize, @intCast(count))) : (i += 1) {
-        if (m[i].id) |p|
+pub fn authdAuthModesFree(modes: []types.AuthdAuthMode) void {
+    for (modes) |m| {
+        if (m.id) |p|
             std.heap.c_allocator.free(std.mem.span(p));
-        if (m[i].label) |p|
+        if (m.label) |p|
             std.heap.c_allocator.free(std.mem.span(p));
     }
-    std.c.free(@ptrCast(m));
+    if (modes.len > 0) std.c.free(modes.ptr);
 }
 
 /// Return a human-readable description for a PAM status code.
@@ -487,85 +477,52 @@ fn handleGdmJson(
             }};
             if (std.posix.poll(&pfds, 0) catch 0 == 0) break;
 
-            var payload: ?[*]u8 = null;
-            var plen: usize = 0;
-            const mtype_raw = comm.commChildRead(&payload, &plen);
-            if (mtype_raw <= 0) {
-                std.c.free(@ptrCast(payload));
-                break;
-            }
-            const mtype: u8 = @intCast(mtype_raw);
+            const r = comm.commChildRead();
+            defer if (r.payload.len > 0) std.c.free(r.payload.ptr);
+            if (r.msg_type <= 0) break;
+            const mtype: u8 = @intCast(r.msg_type);
             log.slog(
                 log.LogImportance.debug,
                 @src(),
                 "handle_gdm_json: poll read mtype=0x{x:0>2} plen={d}",
-                .{ mtype, plen },
+                .{ mtype, r.payload.len },
             );
 
             const maybe_event: ?GdmEvent = switch (mtype) {
                 types.CommMsg.broker_sel => blk: {
-                    const raw: []const u8 = if (payload) |p|
-                        std.mem.span(@as([*:0]const u8, @ptrCast(p)))
-                    else
-                        "";
-                    const id = std.heap.c_allocator.dupe(u8, raw) catch {
-                        std.c.free(@ptrCast(payload));
-                        break :blk null;
-                    };
-                    std.c.free(@ptrCast(payload));
+                    const id = std.heap.c_allocator.dupe(
+                        u8,
+                        std.mem.sliceTo(r.payload, 0),
+                    ) catch break :blk null;
                     break :blk GdmEvent{
                         .brokerSelected = .{ .brokerId = id },
                     };
                 },
                 types.CommMsg.auth_mode_sel => blk: {
-                    const raw: []const u8 = if (payload) |p|
-                        std.mem.span(@as([*:0]const u8, @ptrCast(p)))
-                    else
-                        "";
-                    const id = std.heap.c_allocator.dupe(u8, raw) catch {
-                        std.c.free(@ptrCast(payload));
-                        break :blk null;
-                    };
-                    std.c.free(@ptrCast(payload));
+                    const id = std.heap.c_allocator.dupe(
+                        u8,
+                        std.mem.sliceTo(r.payload, 0),
+                    ) catch break :blk null;
                     break :blk GdmEvent{
                         .authModeSelected = .{ .authModeId = id },
                     };
                 },
-                types.CommMsg.button => blk: {
-                    std.c.free(@ptrCast(payload));
-                    break :blk GdmEvent{ .reselectAuthMode = .{} };
-                },
-                types.CommMsg.cancel => blk: {
-                    std.c.free(@ptrCast(payload));
-                    break :blk GdmEvent{ .isAuthenticatedCancelled = .{} };
-                },
+                types.CommMsg.button => GdmEvent{ .reselectAuthMode = .{} },
+                types.CommMsg.cancel => GdmEvent{ .isAuthenticatedCancelled = .{} },
                 types.CommMsg.password => blk: {
-                    const raw: []const u8 = if (payload) |p|
-                        std.mem.span(@as([*:0]const u8, @ptrCast(p)))
-                    else
-                        "";
-                    const secret = std.heap.c_allocator.dupe(u8, raw) catch {
-                        if (payload != null) {
-                            password_buffer.zero(payload.?[0..plen]);
-                            std.c.free(@ptrCast(payload));
-                        }
-                        break :blk null;
-                    };
+                    const secret = std.heap.c_allocator.dupe(
+                        u8,
+                        std.mem.sliceTo(r.payload, 0),
+                    ) catch break :blk null;
                     // Clear the original credential before freeing.
-                    if (payload != null) {
-                        password_buffer.zero(payload.?[0..plen]);
-                        std.c.free(@ptrCast(payload));
-                    }
+                    password_buffer.zero(r.payload);
                     break :blk GdmEvent{
                         .isAuthenticatedRequested = .{
                             .authenticationData = .{ .secret = secret },
                         },
                     };
                 },
-                else => blk: {
-                    std.c.free(@ptrCast(payload));
-                    break :blk null;
-                },
+                else => null,
             };
             if (maybe_event) |event| {
                 state.pending[state.pending_count] = event;
@@ -628,13 +585,12 @@ fn handleConversation(
                 // this transitions it to AUTH_STATE_INVALID
                 // ("Wrong") and then back to IDLE so the user
                 // can type again.
-                const stage_byte: u8 = @intCast(
+                const stage_byte: [1]u8 = .{@intCast(
                     @intFromEnum(types.AuthdStage.challenge),
-                );
-                const stage_byte_array: [*]const u8 = @ptrCast(&stage_byte);
+                )};
                 _ = comm.commChildWrite(
                     types.CommMsg.stage,
-                    stage_byte_array[0..1],
+                    &stage_byte,
                 );
                 log.slog(
                     log.LogImportance.debug,
@@ -644,32 +600,25 @@ fn handleConversation(
                     .{},
                 );
 
-                var payload: ?[*]u8 = null;
-                var len: usize = 0;
-                while (true) {
-                    const t_raw = comm.commChildRead(&payload, &len);
-                    if (t_raw <= 0) return c.PAM_ABORT;
-                    const t: u8 = @intCast(t_raw);
-                    if (t == types.CommMsg.password) break;
-                    std.c.free(@ptrCast(payload));
-                    payload = null;
+                var read = comm.commChildRead();
+                while (read.msg_type != @as(i32, types.CommMsg.password)) {
+                    if (read.msg_type <= 0) return c.PAM_ABORT;
+                    if (read.payload.len > 0) std.c.free(read.payload.ptr);
+                    read = comm.commChildRead();
                 }
                 log.slog(
                     log.LogImportance.debug,
                     @src(),
                     "handle_conversation: PAM_PROMPT got password (len={d})",
-                    .{len},
+                    .{read.payload.len},
                 );
 
-                const pw_src = std.mem.span(
-                    @as([*:0]const u8, @ptrCast(payload.?)),
-                );
                 const pw_copy = std.heap.c_allocator.dupeZ(
                     u8,
-                    pw_src,
+                    read.payload,
                 ) catch null;
-                password_buffer.zero(payload.?[0..len]);
-                std.c.free(@ptrCast(payload));
+                password_buffer.zero(read.payload);
+                std.c.free(read.payload.ptr);
                 pam_reply[idx].resp = if (pw_copy) |d| d.ptr else null;
                 if (pam_reply[idx].resp == null) {
                     log.slog(log.LogImportance.err, @src(), "allocation failed", .{});
