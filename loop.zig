@@ -4,11 +4,13 @@ const std = @import("std");
 const types = @import("types.zig");
 const log = @import("log.zig");
 
-const alloc = std.heap.c_allocator;
+inline fn alloc() std.mem.Allocator {
+    return @import("allocator").general();
+}
 
 /// Creates a new event loop.
 pub fn loopCreate() ?*types.Loop {
-    const loop = alloc.create(types.Loop) catch {
+    const loop = alloc().create(types.Loop) catch {
         log.slog(
             log.LogImportance.err,
             @src(),
@@ -26,10 +28,10 @@ pub fn loopCreate() ?*types.Loop {
 
 /// Destroys the event loop, freeing all resources.
 pub fn loopDestroy(loop: *types.Loop) void {
-    loop.fd_events.deinit(alloc);
-    for (loop.timers.items) |t| alloc.destroy(t);
-    loop.timers.deinit(alloc);
-    alloc.destroy(loop);
+    loop.fd_events.deinit(alloc());
+    for (loop.timers.items) |t| alloc().destroy(t);
+    loop.timers.deinit(alloc());
+    alloc().destroy(loop);
 }
 
 /// Polls the event loop once, dispatching ready fds and expired
@@ -95,7 +97,7 @@ pub fn loopPoll(loop: *types.Loop) void {
             const timer = loop.timers.items[i];
             if (timer.removed) {
                 _ = loop.timers.orderedRemove(i);
-                alloc.destroy(timer);
+                alloc().destroy(timer);
                 continue;
             }
             const expired =
@@ -105,7 +107,7 @@ pub fn loopPoll(loop: *types.Loop) void {
             if (expired) {
                 _ = loop.timers.orderedRemove(i);
                 timer.callback(timer.data);
-                alloc.destroy(timer);
+                alloc().destroy(timer);
                 continue;
             }
             i += 1;
@@ -121,7 +123,7 @@ pub fn loopAddFd(
     callback: types.FdCallback,
     data: ?*anyopaque,
 ) void {
-    loop.fd_events.append(alloc, .{
+    loop.fd_events.append(alloc(), .{
         .callback = callback,
         .data = data,
         .fd = fd,
@@ -144,7 +146,7 @@ pub fn loopAddTimer(
     callback: types.TimerCallback,
     data: ?*anyopaque,
 ) ?*types.LoopTimer {
-    const timer = alloc.create(types.LoopTimer) catch {
+    const timer = alloc().create(types.LoopTimer) catch {
         log.slog(
             log.LogImportance.err,
             @src(),
@@ -168,8 +170,8 @@ pub fn loopAddTimer(
         .expiry = expiry,
         .removed = false,
     };
-    loop.timers.append(alloc, timer) catch {
-        alloc.destroy(timer);
+    loop.timers.append(alloc(), timer) catch {
+        alloc().destroy(timer);
         log.slog(
             log.LogImportance.err,
             @src(),

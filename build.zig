@@ -249,6 +249,9 @@ pub fn build(b: *std.Build) void {
     main_mod.addImport("cairo_options", gfx_options_mod);
     main_mod.addImport("background_image_options", gfx_options_mod);
     main_mod.addImport("render_options", render_options.createModule());
+    main_mod.addImport("allocator", b.createModule(.{
+        .root_source_file = b.path("allocator.zig"),
+    }));
     const clap_dep = b.dependency("clap", .{
         .target = target,
         .optimize = optimize,

@@ -22,6 +22,7 @@ const password_mod = @import("password.zig");
 const password_buffer = @import("password_buffer.zig");
 
 const pam_mod = @import("pam.zig");
+const allocator_mod = @import("allocator");
 
 var sigusr_fds: [2]i32 = .{ -1, -1 };
 var g: types.State = std.mem.zeroes(types.State);
@@ -1038,6 +1039,8 @@ fn logInit(argc: c_int, argv: [*c][*c]u8) void {
 
 export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
     defer if (comptime opts.have_debug_unlock_on_crash) debugUnlockOnExit();
+    allocator_mod.init();
+    defer allocator_mod.deinit();
 
     logInit(argc, argv);
     pam_mod.initializePwBackend(argc, argv);
@@ -1366,6 +1369,8 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
     g.ext_session_lock_v1 = null;
     _ = wl.wl_display_roundtrip(g.display);
 
+    if (g.eventloop) |el| loop.loopDestroy(el);
+    g.eventloop = null;
     std.c.free(@ptrCast(g.args.font));
     types.c.cairo_destroy(g.test_cairo);
     types.c.cairo_surface_destroy(g.test_surface);

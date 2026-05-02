@@ -4,6 +4,7 @@
 const std = @import("std");
 const math = std.math;
 const opts = @import("render_options");
+const allocator_mod = @import("allocator");
 const types = @import("types.zig");
 
 const wl = types.c;
@@ -249,6 +250,7 @@ pub fn render(surface: *types.Surface) void {
     wl.wl_surface_commit(surface.surface);
 
     if (need_destroy) pool_buffer.destroyBuffer(&buffer);
+    allocator_mod.resetRender();
 }
 
 fn configure_font_drawing(
