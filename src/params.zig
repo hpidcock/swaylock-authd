@@ -256,25 +256,14 @@ const usage =
     "All <color> options are of the form <rrggbb[aa]>.\n";
 
 pub fn parseOptions(
-    argc: c_int,
-    argv: [*c][*c]u8,
+    args: []const []const u8,
     st: ?*types.State,
     line_mode: ?*types.LineMode,
-    config_path: ?*[*c]u8,
-) c_int {
+    config_path: ?*?[]const u8,
+) !void {
     const allocator = std.heap.c_allocator;
-    var args_list = std.ArrayList([]const u8).init(allocator);
-    defer args_list.deinit();
-    for (1..@as(usize, @intCast(argc))) |i| {
-        args_list.append(
-            std.mem.sliceTo(argv[i], 0),
-        ) catch {
-            log.slog(log.LogImportance.err, @src(), "OOM", .{});
-            return 1;
-        };
-    }
     var iter = clap.args.SliceIterator{
-        .args = args_list.items,
+        .args = args,
     };
     var diag = clap.Diagnostic{};
     var parser = clap.streaming.Clap(
@@ -287,7 +276,7 @@ pub fn parseOptions(
     };
     while (parser.next() catch {
         std.debug.print("{s}", .{usage});
-        return 1;
+        return error.ParseFailed;
     }) |arg| {
         const val: ?[]const u8 = arg.value;
         switch (arg.param.id) {
@@ -305,7 +294,7 @@ pub fn parseOptions(
             .debug => log.logInit(log.LogImportance.debug),
             .config => {
                 if (config_path) |cp|
-                    cp.* = c.strdup(val.?.ptr);
+                    cp.* = try allocator.dupe(u8, val.?);
             },
             .color => {
                 if (st) |s|
@@ -334,7 +323,7 @@ pub fn parseOptions(
                             "Invalid ready-fd value",
                             .{},
                         );
-                        return 1;
+                        return error.ParseFailed;
                     };
             },
             .image => {
@@ -365,7 +354,8 @@ pub fn parseOptions(
                         background_image.parseBackgroundMode(
                             val.?,
                         );
-                    if (s.args.mode == .invalid) return 1;
+                    if (s.args.mode == .invalid)
+                        return error.ParseFailed;
                 }
             },
             .tiling => {
@@ -557,7 +547,6 @@ pub fn parseOptions(
             },
         }
     }
-    return 0;
 }
 
 fn parseColor(color_in: [*c]const u8) u32 {

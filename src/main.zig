@@ -628,7 +628,7 @@ fn loadConfig(
     path: []const u8,
     st: *types.State,
     line_mode: *types.LineMode,
-) c_int {
+) !void {
     const file = std.fs.openFileAbsolute(path, .{}) catch {
         log.slog(
             log.LogImportance.err,
@@ -636,7 +636,7 @@ fn loadConfig(
             "Failed to read config. Running without it.",
             .{},
         );
-        return 0;
+        return;
     };
     defer file.close();
     const allocator = std.heap.c_allocator;
@@ -644,7 +644,6 @@ fn loadConfig(
     const reader = buf_reader.reader();
     var line_buf: [4096]u8 = undefined;
     var line_number: usize = 0;
-    var result: c_int = 0;
     while (reader.readUntilDelimiterOrEof(
         &line_buf,
         '\n',
@@ -658,34 +657,14 @@ fn loadConfig(
             "Config Line #{d}: {s}",
             .{ line_number, trimmed },
         );
-        const flag = std.fmt.allocPrintZ(
+        const flag = try std.fmt.allocPrint(
             allocator,
             "--{s}",
             .{trimmed},
-        ) catch {
-            log.slog(
-                log.LogImportance.err,
-                @src(),
-                "Failed to allocate memory",
-                .{},
-            );
-            return 0;
-        };
-        defer allocator.free(flag);
-        var fake_argv: [2][*c]u8 = .{
-            @constCast("swaylock"),
-            @ptrCast(flag.ptr),
-        };
-        result = params.parseOptions(
-            2,
-            &fake_argv,
-            st,
-            line_mode,
-            null,
         );
-        if (result != 0) break;
+        defer allocator.free(flag);
+        try params.parseOptions(&.{flag}, st, line_mode, null);
     }
-    return 0;
 }
 
 fn authStateStr(s: types.AuthState) []const u8 {
@@ -1023,9 +1002,8 @@ fn termIn(
 
 // Scans argv for -d/--debug so the log level is set before
 // full option parsing runs.
-fn logInit(argc: c_int, argv: [*c][*c]u8) void {
-    for (1..@as(usize, @intCast(argc))) |i| {
-        const arg = std.mem.sliceTo(argv[i], 0);
+fn logInit(args: []const []const u8) void {
+    for (args) |arg| {
         if (std.mem.eql(u8, arg, "-d") or
             std.mem.eql(u8, arg, "--debug"))
         {
@@ -1061,12 +1039,15 @@ fn dropRootPrivileges() void {
     }
 }
 
-export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
+pub fn main() !void {
     defer if (comptime opts.have_debug_unlock_on_crash) debugUnlockOnExit();
     allocator_mod.init();
     defer allocator_mod.deinit();
 
-    logInit(argc, argv);
+    const args = try std.process.argsAlloc(std.heap.c_allocator);
+    defer std.process.argsFree(std.heap.c_allocator, args);
+
+    logInit(args[1..]);
 
     pam_mod.initializePwBackend();
     dropRootPrivileges();
@@ -1087,7 +1068,7 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
         (std.heap.c_allocator.dupeZ(
             u8,
             "sans-serif",
-        ) catch return 1).ptr,
+        ) catch return error.Fatal).ptr,
     );
     g.args.font_size = 0;
     g.args.radius = 50;
@@ -1108,18 +1089,10 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
 
     setDefaultColors(&g.args.colors);
 
-    var config_path_c: [*c]u8 = null;
-    var result = params.parseOptions(argc, argv, null, null, &config_path_c);
-    if (result != 0) {
-        if (config_path_c != null) std.c.free(config_path_c);
-        return result;
-    }
-    var config_path: ?[]u8 = null;
-    if (config_path_c != null) {
-        config_path = std.mem.sliceTo(config_path_c, 0);
-    } else {
+    var config_path: ?[]const u8 = null;
+    try params.parseOptions(args[1..], null, null, &config_path);
+    if (config_path == null)
         config_path = getConfigPath(std.heap.c_allocator);
-    }
     defer if (config_path) |p| std.heap.c_allocator.free(p);
     if (config_path) |path| {
         log.slog(
@@ -1128,19 +1101,17 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
             "Found config at {s}",
             .{path},
         );
-        const config_status = loadConfig(path, &g, &line_mode);
-        if (config_status != 0) {
+        loadConfig(path, &g, &line_mode) catch {
             std.c.free(@ptrCast(g.args.font));
-            return config_status;
-        }
+            return error.Fatal;
+        };
     }
-    if (argc > 1) {
+    if (args.len > 1) {
         log.slog(log.LogImportance.debug, @src(), "Parsing CLI Args", .{});
-        result = params.parseOptions(argc, argv, &g, &line_mode, null);
-        if (result != 0) {
+        params.parseOptions(args[1..], &g, &line_mode, null) catch {
             std.c.free(@ptrCast(g.args.font));
-            return result;
-        }
+            return error.Fatal;
+        };
     }
     if (line_mode == .inside) {
         g.args.colors.line = g.args.colors.inside;
@@ -1150,7 +1121,7 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
 
     g.password.len = 0;
     g.password.buffer = password_buffer.create(1024);
-    if (g.password.buffer == null) return 1;
+    if (g.password.buffer == null) return error.Fatal;
     g.password.buffer.?[0] = 0;
 
     const pipe_fds = std.posix.pipe() catch {
@@ -1160,7 +1131,7 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
             "Failed to pipe",
             .{},
         );
-        return 1;
+        return error.Fatal;
     };
     sigusr_fds = pipe_fds;
     // Non-blocking write end prevents signal handler blocking.
@@ -1177,7 +1148,7 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
             "Failed to make pipe end nonblocking",
             .{},
         );
-        return 1;
+        return error.Fatal;
     };
 
     g.xkb.context =
@@ -1193,7 +1164,7 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
                 "WAYLAND_DISPLAY environment variable.",
             .{},
         );
-        return 1;
+        return error.Fatal;
     }
     g.eventloop = loop.loopCreate();
 
@@ -1211,12 +1182,12 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
             "wl_display_roundtrip() failed",
             .{},
         );
-        return 1;
+        return error.Fatal;
     }
 
     if (g.compositor == null) {
         log.slog(log.LogImportance.err, @src(), "Missing wl_compositor", .{});
-        return 1;
+        return error.Fatal;
     }
     if (g.subcompositor == null) {
         log.slog(
@@ -1225,11 +1196,11 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
             "Missing wl_subcompositor",
             .{},
         );
-        return 1;
+        return error.Fatal;
     }
     if (g.shm == null) {
         log.slog(log.LogImportance.err, @src(), "Missing wl_shm", .{});
-        return 1;
+        return error.Fatal;
     }
     if (g.ext_session_lock_manager_v1 == null) {
         log.slog(
@@ -1238,7 +1209,7 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
             "Missing ext-session-lock-v1",
             .{},
         );
-        return 1;
+        return error.Fatal;
     }
 
     if (g.args.steal_unlock) {
@@ -1259,7 +1230,7 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
                     "wl_display_dispatch() failed",
                     .{},
                 );
-                return 1;
+                return error.Fatal;
             }
         }
         if (!g.locked) {
@@ -1270,13 +1241,13 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
                     "another locker may still be connected.",
                 .{},
             );
-            return 1;
+            return error.Fatal;
         }
         wl.ext_session_lock_v1_unlock_and_destroy(
             g.ext_session_lock_v1,
         );
         _ = wl.wl_display_roundtrip(g.display);
-        return 0;
+        return;
     }
 
     g.ext_session_lock_v1 =
@@ -1291,7 +1262,7 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
 
     if (wl.wl_display_roundtrip(g.display) == -1) {
         std.c.free(@ptrCast(g.args.font));
-        return 1;
+        return error.Fatal;
     }
 
     g.test_surface = types.c.cairo_image_surface_create(
@@ -1313,7 +1284,7 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
                 "wl_display_dispatch() failed",
                 .{},
             );
-            return 2;
+            std.process.exit(2);
         }
     }
 
@@ -1329,7 +1300,7 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
                 "Failed to send readiness notification",
                 .{},
             );
-            return 2;
+            std.process.exit(2);
         }
         std.posix.close(g.args.ready_fd);
         g.args.ready_fd = -1;
@@ -1400,5 +1371,4 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
     std.c.free(@ptrCast(g.args.font));
     types.c.cairo_destroy(g.test_cairo);
     types.c.cairo_surface_destroy(g.test_surface);
-    return 0;
 }
