@@ -1,7 +1,7 @@
-Source: swaylock
+Source: swaylock-authd
 Section: x11
 Priority: optional
-Maintainer: Debian Sway Maintainers <team+sway@tracker.debian.org>
+Maintainer: Harry Pidcock <harry.pidcock@canonical.com>
 Build-Depends:
  debhelper-compat (= 13),
  zig (>= 0.14.0),
@@ -17,18 +17,23 @@ Build-Depends:
  libqrencode-dev,
  scdoc,
 Standards-Version: 4.7.0
-Homepage: https://github.com/swaywm/swaylock
+Homepage: https://github.com/hpidcock/swaylock-authd
 Rules-Requires-Root: no
 
-Package: swaylock
+Package: swaylock-authd
 Architecture: any
 Depends:
  ${shlibs:Depends},
  ${misc:Depends},
-Description: Screen locker for Wayland compositors
- swaylock is a screen locking utility for Wayland compositors. It is
- compatible with any Wayland compositor which implements the
- ext-session-lock-v1 Wayland protocol.
+Conflicts: swaylock,
+Description: Screen locker for Wayland compositors with authd support
+ swaylock-authd is a derivative of swaylock, a screen locking utility for
+ Wayland compositors implementing the ext-session-lock-v1 protocol.
  .
- Features include colour and image backgrounds, scaling modes, and PAM
- authentication support.
+ This variant adds support for Ubuntu authd. When /run/authd.sock is present,
+ authentication is driven through the GDM PAM extension JSON protocol
+ (com.ubuntu.authd.gdm), presenting a multi-stage UI for broker selection,
+ authentication mode selection, and challenge input including QR code layouts.
+ .
+ Features include colour and image backgrounds, scaling modes, PAM
+ authentication, and authd multi-factor authentication support.

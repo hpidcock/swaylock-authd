@@ -41,13 +41,13 @@ jobs:
           DEBUG_OVERLAY: ${{ inputs.debug_overlay }}
         run: |
           short_sha=$(git rev-parse --short HEAD)
-          version=$(sed -n '1s/^swaylock (\([^)]*\)).*/\1/p' debian/changelog)
+          version=$(sed -n '1s/^swaylock-authd (\([^)]*\)).*/\1/p' debian/changelog)
           if [ "$DEBUG_OVERLAY" = "true" ]; then
             new_version="${version}+dbg+g${short_sha}"
           else
             new_version="${version}+g${short_sha}"
           fi
-          sed -i "s/^swaylock (${version})/swaylock (${new_version})/" debian/changelog
+          sed -i "s/^swaylock-authd (${version})/swaylock-authd (${new_version})/" debian/changelog
 
       - name: Install build dependencies
         run: |
@@ -77,9 +77,9 @@ jobs:
       - name: Collect artifacts
         run: |
           mkdir -p artifacts
-          mv ../swaylock_*.deb \
-            ../swaylock_*.buildinfo \
-            ../swaylock_*.changes \
+          mv ../swaylock-authd_*.deb \
+            ../swaylock-authd_*.buildinfo \
+            ../swaylock-authd_*.changes \
             artifacts/
 
       - name: Create release and upload artifacts

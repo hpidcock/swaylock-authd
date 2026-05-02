@@ -135,7 +135,7 @@ pub fn build(b: *std.Build) void {
     ) catch @panic("OOM");
     flags.append(
         b.allocator,
-        "-DSWAYLOCK_VERSION=\"1.8.5\"",
+        "-DSWAYLOCK_VERSION=\"1.0.0\"",
     ) catch @panic("OOM");
     flags.append(
         b.allocator,
@@ -231,7 +231,7 @@ pub fn build(b: *std.Build) void {
         debug_unlock_on_crash,
     );
     main_options.addOption([]const u8, "sysconfdir", sysconfdir);
-    main_options.addOption([]const u8, "swaylock_version", "1.8.5");
+    main_options.addOption([]const u8, "swaylock_version", "1.0.0");
 
     // main_mod is the only Zig module declared here. All other local
     // .zig files are imported directly via @import("foo.zig") chains

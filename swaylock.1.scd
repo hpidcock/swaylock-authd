@@ -2,214 +2,338 @@ swaylock(1)
 
 # NAME
 
-swaylock - Screen locker for Wayland
+swaylock - screen locker for Wayland (swaylock-authd; with authd support)
 
 # SYNOPSIS
 
 _swaylock_ [options...]
 
-Locks your Wayland session.
+# DESCRIPTION
 
-# OPTIONS
+swaylock locks a Wayland session by acquiring an exclusive lock surface on
+every output via the ext-session-lock-v1 protocol. The session remains locked
+until the correct password is entered. Any compositor that implements
+ext-session-lock-v1 is supported.
 
-*-C, --config* <path>
-	The config file to use. By default, the following paths are checked:
-	_$HOME/.swaylock/config_, _$XDG\_CONFIG\_HOME/swaylock/config_, and
-	_SYSCONFDIR/swaylock/config_. All flags aside from this one are valid
-	options in the configuration file using the format _long-option=value_.
-	For options such as _ignore-empty-password_, just supply the _long-option_.
-	All leading dashes should be omitted and the equals sign is required for
-	flags that take an argument. For example:
+On startup, swaylock reads a configuration file (if one exists), then applies
+any command-line arguments on top. Command-line arguments always win.
 
-	```
-	image=/usr/share/backgrounds/sway/Sway_Wallpaper_Blue_768x1024.png
-	scaling=center
-	show-failed-attempts
-	ring-color=#ff00ff
-	```
+# AUTHD
 
-*-d, --debug*
-	Enable debugging output.
+swaylock supports Ubuntu authd as an alternative authentication backend. If
+_/run/authd.sock_ exists when swaylock starts, the PAM child process
+advertises the GDM PAM extension JSON protocol
+(_com.ubuntu.authd.gdm_, version 1) to the loaded PAM modules. The authd
+PAM module then drives authentication through that protocol instead of the
+standard PAM conversation.
 
-*-e, --ignore-empty-password*
-	When an empty password is provided, do not validate it.
+When authd is active, the lock screen presents a multi-stage UI:
 
-*-F, --show-failed-attempts*
-	Show current count of failed authentication attempts.
+*Broker selection*
+	A scrollable list of available authentication brokers is shown in
+	place of the ring indicator. Use the arrow keys to move the selection
+	and Enter to confirm. Up to eight entries are visible at once.
 
-*-f, --daemonize*
-	Detach from the controlling terminal after locking.
+*Authentication mode selection*
+	After a broker is chosen, its supported authentication modes are
+	listed in the same way.
 
-	Note: this is the default behavior of i3lock.
+*Challenge*
+	The challenge stage replaces the list with the normal ring
+	indicator or one of the following authd-specific layouts:
 
-*-R, --ready-fd* <fd>
-	File descriptor to send readiness notifications to.
+	_form_ – A text entry field. The _entry_ hint from the broker
+	determines the accepted input type: _chars_, _chars\_password_,
+	_digits_, or _digits\_password_.
 
-	When the session has been locked, a single newline is written to the FD.
-	At this point, the compositor guarantees that no security sensitive content
-	is visible on-screen.
+	_newpassword_ – A two-field password-change form.
+
+	_qrcode_ – A QR code is rendered on screen (requires the binary to
+	be built with *-Dqrencode=true*). A human-readable fallback string
+	is shown beneath the image when provided by the broker.
+
+If _/run/authd.sock_ is absent, swaylock falls back to a plain PAM
+conversation with no broker or mode selection.
+
+# GENERAL OPTIONS
 
 *-h, --help*
-	Show help message and quit.
+	Print a usage summary and exit.
 
 *-v, --version*
-	Show the version number and quit.
+	Print the version string and exit.
 
-# APPEARANCE
+*-C, --config* <path>
+	Read configuration from <path> instead of the default locations.
 
-*-u, --no-unlock-indicator*
-	Disable the unlock indicator.
+*-d, --debug*
+	Enable verbose debug logging.
+
+*-e, --ignore-empty-password*
+	Skip password validation when the input is empty.
+
+*-F, --show-failed-attempts*
+	Show the running count of failed attempts on the indicator.
+
+*-f, --daemonize*
+	Fork into the background after the session is confirmed locked. The
+	parent process waits for the child to signal readiness, then exits.
+	stdout and stderr are redirected to _/dev/null_ in the child.
+
+*-R, --ready-fd* <fd>
+	Write a single newline byte to <fd> once the compositor has confirmed
+	that the session is locked and no sensitive content remains visible.
+	The fd is closed immediately afterwards.
+
+*--steal-unlock*
+	Attempt to seize the ext-session-lock from a previously crashed
+	swaylock instance. If successful, the session is immediately unlocked
+	and swaylock exits. If another locker is still attached, the
+	compositor will refuse the lock and swaylock exits with an error.
+
+# BACKGROUND
 
 *-i, --image* [[<output>]:]<path>
-	Display the given image, optionally only on the given output. Use -c to set
-	a background color. If the path potentially contains a ':', prefix it with another
-	':' to prevent interpreting part of it as <output>.
-
-*-k, --show-keyboard-layout*
-	Display the current xkb layout while typing.
-
-*-K, --hide-keyboard-layout*
-	Force hiding the current xkb layout while typing, even if more than one layout
-	is configured or the show-keyboard-layout option is set.
-
-*-L, --disable-caps-lock-text*
-	Disable the Caps Lock text.
-
-*-l, --indicator-caps-lock*
-	Show the current Caps Lock state also on the indicator.
-
-*-s, --scaling*
-	Image scaling mode: _stretch_, _fill_, _fit_, _center_, _tile_,
-	_solid\_color_. Use _solid\_color_ to display only the background color, even
-	if a background image is specified.
-
-*-t, --tiling*
-	Same as --scaling=tile.
+	Load an image from <path> and use it as the background. If an output
+	name is given before the colon, the image is applied to that output
+	only; otherwise it becomes the default for all outputs. This option
+	may be given multiple times. If the image path itself contains a
+	colon, prepend an extra colon to prevent the output-name prefix from
+	being parsed.
 
 *-c, --color* <rrggbb[aa]>
-	Turn the screen into the given color instead of light gray. If -i is used,
-	this sets the background of the image to the given color. Defaults to light
-	gray (A3A3A3).
+	Fill the background with a solid colour. When *-i* is also given,
+	this colour appears behind the image. Defaults to _A3A3A3_ (light
+	grey).
 
-*--bs-hl-color* <rrggbb[aa]>
-	Sets the color of backspace highlight segments.
+*-s, --scaling* <mode>
+	How to scale the background image to fit each output. Accepted
+	values: _stretch_, _fill_, _fit_, _center_, _tile_, _solid_color_.
+	Specifying _solid_color_ suppresses the image entirely and shows only
+	the background colour. Defaults to _fill_.
 
-*--caps-lock-bs-hl-color* <rrggbb[aa]>
-	Sets the color of backspace highlight segments when Caps Lock is active.
+*-t, --tiling*
+	Shorthand for *--scaling=tile*.
 
-*--caps-lock-key-hl-color* <rrggbb[aa]>
-	Sets the color of the key press highlight segments when Caps Lock is active.
+# INDICATOR
 
-*--font* <font>
-	Sets the font of the text.
+The indicator is a circular widget drawn on every output. Its ring, fill, and
+text change colour to reflect the current authentication state.
 
-*--font-size* <size>
-	Sets a fixed font size for the indicator text.
+*-u, --no-unlock-indicator*
+	Do not draw the indicator at all.
 
 *--indicator-idle-visible*
-	Sets the indicator to show even if idle.
+	Keep the indicator visible even when there is no keyboard activity.
+	By default it is hidden while idle.
 
-*--indicator-radius* <radius>
-	Sets the indicator radius. The default value is 50.
+*--indicator-radius* <r>
+	Outer radius of the indicator in pixels. Defaults to _50_.
 
-*--indicator-thickness* <thickness>
-	Sets the indicator thickness. The default value is 10.
+*--indicator-thickness* <t>
+	Thickness of the ring in pixels. Defaults to _10_.
 
 *--indicator-x-position* <x>
-	Sets the horizontal position of the indicator.
+	Pin the horizontal centre of the indicator to <x> pixels from the
+	left edge of the output. Without this option, the indicator is
+	centred automatically.
 
 *--indicator-y-position* <y>
-	Sets the vertical position of the indicator.
+	Pin the vertical centre of the indicator to <y> pixels from the top
+	edge of the output. Without this option, the indicator is centred
+	automatically.
 
-*--inside-color* <rrggbb[aa]>
-	Sets the color of the inside of the indicator.
+*--font* <name>
+	Pango font description used for all indicator text. Defaults to
+	_sans-serif_.
 
-*--inside-clear-color* <rrggbb[aa]>
-	Sets the color of the inside of the indicator when cleared.
+*--font-size* <pt>
+	Force the indicator text to a fixed point size. When absent or zero
+	the size is chosen automatically based on the indicator radius.
 
-*--inside-caps-lock-color* <rrggbb[aa]>
-	Sets the color of the inside of the indicator when Caps Lock is active.
+*-k, --show-keyboard-layout*
+	Display the active xkb layout name below the indicator while typing.
 
-*--inside-ver-color* <rrggbb[aa]>
-	Sets the color of the inside of the indicator when verifying.
+*-K, --hide-keyboard-layout*
+	Always hide the layout name, even when more than one layout is
+	configured or *--show-keyboard-layout* is set.
 
-*--inside-wrong-color* <rrggbb[aa]>
-	Sets the color of the inside of the indicator when invalid.
+*-L, --disable-caps-lock-text*
+	Do not show the "Caps Lock" label on the indicator.
 
-*--key-hl-color* <rrggbb[aa]>
-	Sets the color of the key press highlight segments.
+*-l, --indicator-caps-lock*
+	Tint the indicator ring and fill using the Caps Lock colour set when
+	Caps Lock is active, so its state is visible at a glance.
 
-*--layout-bg-color* <rrggbb[aa]>
-	Sets the background color of the box containing the layout text.
+# COLOURS
 
-*--layout-border-color* <rrggbb[aa]>
-	Sets the color of the border of the box containing the layout text.
+All colour options accept a hex value in _rrggbb_ or _rrggbbaa_ form. The
+alpha component defaults to _ff_ when omitted.
 
-*--layout-text-color* <rrggbb[aa]>
-	Sets the color of the layout text.
+The indicator has five states that drive colour selection:
 
-*--line-color* <rrggbb[aa]>
-	Sets the color of the line between the inside and ring.
+- *input* – the user is typing a password
+- *cleared* – the input buffer has just been cleared
+- *caps-lock* – Caps Lock is active (requires *-l*)
+- *verifying* – password verification is in progress
+- *wrong* – the last attempt was rejected
 
-*--line-clear-color* <rrggbb[aa]>
-	Sets the color of the line between the inside and ring when cleared.
+## Key highlights
 
-*--line-caps-lock-color* <rrggbb[aa]>
-	Sets the color of the line between the inside and ring when Caps Lock is
-	active.
+Arc segments appear on the ring as keys are pressed or deleted.
 
-*--line-ver-color* <rrggbb[aa]>
-	Sets the color of the line between the inside and ring when verifying.
+*--key-hl-color* <color>
+	Colour of key-press arcs. Defaults to _33DB00FF_.
 
-*--line-wrong-color* <rrggbb[aa]>
-	Sets the color of the line between the inside and ring when invalid.
+*--bs-hl-color* <color>
+	Colour of backspace arcs. Defaults to _DB3300FF_.
+
+*--caps-lock-key-hl-color* <color>
+	Colour of key-press arcs when Caps Lock is active. Defaults to
+	_33DB00FF_.
+
+*--caps-lock-bs-hl-color* <color>
+	Colour of backspace arcs when Caps Lock is active. Defaults to
+	_DB3300FF_.
+
+*--separator-color* <color>
+	Colour of the lines between arc segments. Defaults to _000000FF_.
+
+## Inside fill
+
+*--inside-color* <color>
+	Input state. Defaults to _000000C0_.
+
+*--inside-clear-color* <color>
+	Cleared state. Defaults to _E5A445C0_.
+
+*--inside-caps-lock-color* <color>
+	Caps Lock state. Defaults to _000000C0_.
+
+*--inside-ver-color* <color>
+	Verifying state. Defaults to _0072FFC0_.
+
+*--inside-wrong-color* <color>
+	Wrong state. Defaults to _FA0000C0_.
+
+## Dividing line
+
+The line sits between the inside fill and the outer ring.
+
+*--line-color* <color>
+	Input state. Defaults to _000000FF_.
+
+*--line-clear-color* <color>
+	Cleared state. Defaults to _000000FF_.
+
+*--line-caps-lock-color* <color>
+	Caps Lock state. Defaults to _000000FF_.
+
+*--line-ver-color* <color>
+	Verifying state. Defaults to _000000FF_.
+
+*--line-wrong-color* <color>
+	Wrong state. Defaults to _000000FF_.
 
 *-n, --line-uses-inside*
-	Use the inside color for the line between the inside and ring.
+	Instead of the line colours above, always use the current inside fill
+	colour for the line.
 
 *-r, --line-uses-ring*
-	Use the ring color for the line between the inside and ring.
+	Instead of the line colours above, always use the current ring colour
+	for the line.
 
-*--ring-color* <rrggbb[aa]>
-	Sets the color of the ring of the indicator when typing or idle.
+## Ring
 
-*--ring-clear-color* <rrggbb[aa]>
-	Sets the color of the ring of the indicator when cleared.
+*--ring-color* <color>
+	Input state. Defaults to _337D00FF_.
 
-*--ring-caps-lock-color* <rrggbb[aa]>
-	Sets the color of the ring of the indicator when Caps Lock is active.
+*--ring-clear-color* <color>
+	Cleared state. Defaults to _E5A445FF_.
 
-*--ring-ver-color* <rrggbb[aa]>
-	Sets the color of the ring of the indicator when verifying.
+*--ring-caps-lock-color* <color>
+	Caps Lock state. Defaults to _E5A445FF_.
 
-*--ring-wrong-color* <rrggbb[aa]>
-	Sets the color of the ring of the indicator when invalid.
+*--ring-ver-color* <color>
+	Verifying state. Defaults to _3300FFFF_.
 
-*--separator-color* <rrggbb[aa]>
-	Sets the color of the lines that separate highlight segments.
+*--ring-wrong-color* <color>
+	Wrong state. Defaults to _7D3300FF_.
 
-*--text-color* <rrggbb[aa]>
-	Sets the color of the text.
+## Text
 
-*--text-clear-color* <rrggbb[aa]>
-	Sets the color of the text when cleared.
+*--text-color* <color>
+	Input state. Defaults to _E5A445FF_.
 
-*--text-caps-lock-color* <rrggbb[aa]>
-	Sets the color of the text when Caps Lock is active.
+*--text-clear-color* <color>
+	Cleared state. Defaults to _000000FF_.
 
-*--text-ver-color* <rrggbb[aa]>
-	Sets the color of the text when verifying.
+*--text-caps-lock-color* <color>
+	Caps Lock state. Defaults to _E5A445FF_.
 
-*--text-wrong-color* <rrggbb[aa]>
-	Sets the color of the text when invalid.
+*--text-ver-color* <color>
+	Verifying state. Defaults to _000000FF_.
+
+*--text-wrong-color* <color>
+	Wrong state. Defaults to _000000FF_.
+
+## Keyboard layout label
+
+*--layout-bg-color* <color>
+	Background fill of the layout label box. Defaults to _000000C0_.
+
+*--layout-border-color* <color>
+	Border of the layout label box. Defaults to _00000000_ (transparent).
+
+*--layout-text-color* <color>
+	Text inside the layout label box. Defaults to _FFFFFFFF_.
+
+# CONFIGURATION FILE
+
+swaylock searches the following paths in order and reads the first file it
+finds:
+
+. _$HOME/.swaylock/config_
+. _$XDG_CONFIG_HOME/swaylock/config_ — or _$HOME/.config/swaylock/config_
+  when XDG_CONFIG_HOME is unset or empty
+. _SYSCONFDIR/swaylock/config_ (typically _/etc/swaylock/config_)
+
+A different path can be forced with *-C*.
+
+Each non-empty line that does not begin with *#* is treated as a single
+long-form option. Strip the leading dashes, and append *=<value>* for
+options that take a value. Boolean flags need no value at all. Example:
+
+```
+# background
+image=/usr/share/backgrounds/default.png
+scaling=fill
+
+# indicator colours
+ring-color=3300ffff
+text-color=ffffffff
+
+# behaviour
+show-failed-attempts
+ignore-empty-password
+```
+
+Command-line arguments are processed after the configuration file and
+override any conflicting values.
 
 # SIGNALS
 
 *SIGUSR1*
-	Unlock the screen and exit.
+	Unlock the session and exit cleanly.
 
-# AUTHORS
+# ACKNOWLEDGEMENTS
 
-Maintained by Drew DeVault <sir@cmpwn.com>, who is assisted by other open
-source contributors. For more information about swaylock development, see
-https://github.com/swaywm/swaylock.
+swaylock-authd is a derivative work of the original swaylock, written by Drew
+DeVault and contributors. The original source is available at
+https://github.com/swaywm/swaylock and this project is at
+https://github.com/hpidcock/swaylock-authd. Both are released under the MIT
+licence.
+
+# SEE ALSO
+
+sway(1), xkbcommon(3)

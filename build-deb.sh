@@ -2,7 +2,7 @@
 set -eu
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
-CONTAINER="swaylock-build-$$"
+CONTAINER="swaylock-authd-build-$$"
 OUTPUT_DIR="${SCRIPT_DIR}/build-output"
 
 cleanup() {
@@ -56,16 +56,16 @@ tar -C "$SCRIPT_DIR" \
 	--exclude='build-output' \
 	-czf - . \
 	| lxc exec "$CONTAINER" -- \
-		sh -c 'mkdir -p /root/swaylock && tar -C /root/swaylock -xzf -'
+		sh -c 'mkdir -p /root/swaylock-authd && tar -C /root/swaylock-authd -xzf -'
 
 echo "Building package..."
-lxc exec "$CONTAINER" --cwd /root/swaylock -- \
+lxc exec "$CONTAINER" --cwd /root/swaylock-authd -- \
 	dpkg-buildpackage -us -uc -b
 
 echo "Retrieving build artifacts..."
 lxc exec "$CONTAINER" -- \
-	sh -c 'cd /root && tar -czf - swaylock_*.deb \
-		swaylock_*.buildinfo swaylock_*.changes' \
+	sh -c 'cd /root && tar -czf - swaylock-authd_*.deb \
+		swaylock-authd_*.buildinfo swaylock-authd_*.changes' \
 	| tar -C "$OUTPUT_DIR" -xzf -
 
 echo "Build complete. Artifacts in: $OUTPUT_DIR"

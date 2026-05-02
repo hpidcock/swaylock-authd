@@ -1,4 +1,4 @@
-swaylock (1.8.5-1) unstable; urgency=medium
+swaylock-authd (1.0.0-1) unstable; urgency=medium
 
   * Initial Debian packaging.
 

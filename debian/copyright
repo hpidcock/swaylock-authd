@@ -1,14 +1,15 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
-Upstream-Name: swaylock
-Upstream-Contact: Drew DeVault <sir@cmpwn.com>
-Source: https://github.com/swaywm/swaylock
+Upstream-Name: swaylock-authd
+Upstream-Contact: Harry Pidcock <harry.pidcock@canonical.com>
+Source: https://github.com/hpidcock/swaylock-authd
 
 Files: *
 Copyright: 2016-2019 Drew DeVault
+           2026 Harry Pidcock
 License: MIT
 
 Files: debian/*
-Copyright: 2026 Debian Sway Maintainers <team+sway@tracker.debian.org>
+Copyright: 2026 Harry Pidcock <harry.pidcock@canonical.com>
 License: MIT
 
 License: MIT

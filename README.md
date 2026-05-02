@@ -1,65 +1,99 @@
-# swaylock
+# swaylock-authd
 
-swaylock is a screen locking utility for Wayland compositors. It is compatible
-with any Wayland compositor which implements the ext-session-lock-v1 Wayland
-protocol.
+A Wayland session locker. Acquires an exclusive lock surface on every output
+using the ext-session-lock-v1 protocol and holds it until the correct password
+is authenticated through PAM. The binary is named `swaylock`.
 
-See the man page, [swaylock(1)](swaylock.1.scd), for instructions on using swaylock.
+> [!WARNING]
+> This software is experimental. Although every effort has been made to ensure
+> it is secure, it has not been independently audited. Use at your own risk.
 
-## Release Signatures
+## Building
 
-Releases are signed with [E88F5E48](https://keys.openpgp.org/search?q=34FF9526CFEF0E97A340E2E40FDE7BE0E88F5E48)
-and published [on GitHub](https://github.com/swaywm/swaylock/releases). swaylock
-releases are managed independently of sway releases.
+Requires Zig 0.14.0 or later, plus the following libraries:
 
-## Installation
+| Library | Notes |
+|---|---|
+| wayland-client | |
+| libxkbcommon | |
+| cairo | |
+| pam | |
+| wayland-protocols | build-time |
+| wayland-scanner | build-time |
+| gdk-pixbuf-2.0 | optional; needed for non-PNG backgrounds |
+| libqrencode | optional; needed for QR code rendering |
 
-### From Packages
+```sh
+zig build -Doptimize=ReleaseSafe
+sudo install -m755 zig-out/bin/swaylock /usr/local/bin/swaylock
+```
 
-Swaylock is available in many distributions. Try installing the "swaylock"
-package for yours.
+Build options passed with `-D<option>=<value>`:
 
-### Compiling from Source
+| Option | Default | Description |
+|---|---|---|
+| `gdk-pixbuf` | `true` | Enable gdk-pixbuf image loading |
+| `qrencode` | `false` | Enable QR code rendering |
+| `sysconfdir` | `/etc` | System-wide config directory prefix |
+| `wl-proto-dir` | pkg-config | Override wayland-protocols pkgdatadir |
 
-Install dependencies:
+## Configuration
 
-* meson \*
-* wayland
-* wayland-protocols \*
-* libxkbcommon
-* cairo
-* gdk-pixbuf2 \*\*
-* pam (optional)
-* [scdoc](https://git.sr.ht/~sircmpwn/scdoc) (optional: man pages) \*
-* git \*
+swaylock reads the first config file it finds at these paths, in order:
 
-_\* Compile-time dep_  
-_\*\* Optional: required for background images other than PNG_
+1. `~/.swaylock/config`
+2. `$XDG_CONFIG_HOME/swaylock/config` (falls back to `~/.config/swaylock/config`)
+3. `$sysconfdir/swaylock/config`
 
-Run these commands:
+Each line is a long-form option with leading dashes removed. Boolean flags
+stand alone; valued options use `key=value`. Lines beginning with `#` and
+blank lines are ignored. A custom path can be given with `-C`.
 
-    meson build
-    ninja -C build
-    sudo ninja -C build install
+See `swaylock(1)` for the full option reference.
 
-##### Without PAM
+## authd
 
-On systems without PAM, swaylock uses `shadow.h`.
+swaylock supports [Ubuntu authd](https://github.com/ubuntu/authd) as an
+alternative authentication backend. If `/run/authd.sock` exists at startup,
+the PAM child process advertises the GDM PAM extension JSON protocol to any
+loaded PAM modules. The authd PAM module then takes over and drives a
+multi-stage authentication flow:
 
-Systems which rely on a tcb-like setup (either via musl's native support or via
-glibc+[tcb]), require no further action.
+1. **Broker selection** — a scrollable list of available brokers replaces
+   the ring indicator. Arrow keys move the selection; Enter confirms.
+2. **Authentication mode selection** — the chosen broker's supported modes
+   are presented in the same list format.
+3. **Challenge** — the ring indicator or an authd-specific layout is shown:
+   - `form` — a text entry field; the broker specifies the accepted input
+     type (`chars`, `chars_password`, `digits`, `digits_password`).
+   - `newpassword` — a password-change form.
+   - `qrcode` — a QR code rendered on screen (requires
+     `-Dqrencode=true` at build time), with an optional human-readable
+     fallback string below.
 
-[tcb]: https://www.openwall.com/tcb/
+If `/run/authd.sock` is absent, swaylock falls back to a plain PAM
+conversation.
 
-For most other systems, where passwords for all users are stored in `/etc/shadow`,
-swaylock needs to be installed suid:
+## Privileges
 
-    sudo chmod a+s /usr/local/bin/swaylock
+swaylock spawns a child process to run PAM authentication. That child must
+be able to open the PAM service, which on many systems requires elevated
+privileges. Install the binary setuid root:
 
-Optionally, on systems where the file `/etc/shadow` is owned by the `shadow`
-group, the binary can be made sgid instead:
+```sh
+sudo chmod a+s /usr/local/bin/swaylock
+```
 
-    sudo chgrp shadow /usr/local/bin/swaylock
-    sudo chmod g+s /usr/local/bin/swaylock
+Elevated privileges are dropped shortly after startup.
 
-Swaylock will drop root permissions shortly after startup.
+## Acknowledgements
+
+swaylock-authd is a derivative work of the original swaylock, written by Drew
+DeVault and contributors. The original project is at
+https://github.com/swaywm/swaylock and this project is at
+https://github.com/hpidcock/swaylock-authd. Both are released under the MIT
+licence.
+
+## AI Disclosure
+
+The refactoring of this project from C into Zig was assisted by AI tooling.
