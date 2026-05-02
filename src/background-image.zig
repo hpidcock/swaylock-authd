@@ -216,3 +216,53 @@ pub fn renderBackgroundImage(
     c.cairo_paint(cairo);
     c.cairo_restore(cairo);
 }
+
+test "parseBackgroundMode: known modes" {
+    try std.testing.expectEqual(
+        types.BackgroundMode.stretch,
+        parseBackgroundMode("stretch"),
+    );
+    try std.testing.expectEqual(
+        types.BackgroundMode.fill,
+        parseBackgroundMode("fill"),
+    );
+    try std.testing.expectEqual(
+        types.BackgroundMode.fit,
+        parseBackgroundMode("fit"),
+    );
+    try std.testing.expectEqual(
+        types.BackgroundMode.center,
+        parseBackgroundMode("center"),
+    );
+    try std.testing.expectEqual(
+        types.BackgroundMode.tile,
+        parseBackgroundMode("tile"),
+    );
+    try std.testing.expectEqual(
+        types.BackgroundMode.solid_color,
+        parseBackgroundMode("solid_color"),
+    );
+}
+
+test "parseBackgroundMode: unknown string returns invalid" {
+    try std.testing.expectEqual(
+        types.BackgroundMode.invalid,
+        parseBackgroundMode("unknown"),
+    );
+    try std.testing.expectEqual(
+        types.BackgroundMode.invalid,
+        parseBackgroundMode(""),
+    );
+}
+
+test "parseBackgroundMode: case-sensitive" {
+    // Mode strings must be lowercase; upper-case is not valid.
+    try std.testing.expectEqual(
+        types.BackgroundMode.invalid,
+        parseBackgroundMode("Stretch"),
+    );
+    try std.testing.expectEqual(
+        types.BackgroundMode.invalid,
+        parseBackgroundMode("FILL"),
+    );
+}

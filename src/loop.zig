@@ -205,3 +205,153 @@ pub fn loopRemoveTimer(
     }
     return false;
 }
+
+test "loop: create and destroy" {
+    @import("allocator").init();
+    const loop = loopCreate() orelse
+        return error.TestExpectedNonNull;
+    loopDestroy(loop);
+}
+
+test "loop: addFd and removeFd" {
+    @import("allocator").init();
+    const loop = loopCreate() orelse
+        return error.TestExpectedNonNull;
+    defer loopDestroy(loop);
+
+    const cb: types.FdCallback = struct {
+        fn f(_: i32, _: i16, _: ?*anyopaque) callconv(.c) void {}
+    }.f;
+
+    loopAddFd(loop, 42, std.posix.POLL.IN, cb, null);
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        loop.fd_events.items.len,
+    );
+    try std.testing.expectEqual(
+        @as(i32, 42),
+        loop.fd_events.items[0].fd,
+    );
+
+    try std.testing.expect(loopRemoveFd(loop, 42));
+    try std.testing.expectEqual(
+        @as(usize, 0),
+        loop.fd_events.items.len,
+    );
+}
+
+test "loop: removeFd returns false for unknown fd" {
+    @import("allocator").init();
+    const loop = loopCreate() orelse
+        return error.TestExpectedNonNull;
+    defer loopDestroy(loop);
+
+    try std.testing.expect(!loopRemoveFd(loop, 99));
+}
+
+test "loop: addFd stores data pointer" {
+    @import("allocator").init();
+    const loop = loopCreate() orelse
+        return error.TestExpectedNonNull;
+    defer loopDestroy(loop);
+
+    var sentinel: u32 = 0xDEAD;
+    const cb: types.FdCallback = struct {
+        fn f(_: i32, _: i16, _: ?*anyopaque) callconv(.c) void {}
+    }.f;
+
+    loopAddFd(
+        loop,
+        7,
+        std.posix.POLL.IN,
+        cb,
+        &sentinel,
+    );
+    try std.testing.expectEqual(
+        @as(?*anyopaque, @ptrCast(&sentinel)),
+        loop.fd_events.items[0].data,
+    );
+}
+
+test "loop: addTimer registers timer" {
+    @import("allocator").init();
+    const loop = loopCreate() orelse
+        return error.TestExpectedNonNull;
+    defer loopDestroy(loop);
+
+    const cb: types.TimerCallback = struct {
+        fn f(_: ?*anyopaque) callconv(.c) void {}
+    }.f;
+
+    const timer = loopAddTimer(loop, 1000, cb, null) orelse
+        return error.TestExpectedNonNull;
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        loop.timers.items.len,
+    );
+    try std.testing.expect(!timer.removed);
+}
+
+test "loop: removeTimer marks removed" {
+    @import("allocator").init();
+    const loop = loopCreate() orelse
+        return error.TestExpectedNonNull;
+    defer loopDestroy(loop);
+
+    const cb: types.TimerCallback = struct {
+        fn f(_: ?*anyopaque) callconv(.c) void {}
+    }.f;
+
+    const timer = loopAddTimer(loop, 500, cb, null) orelse
+        return error.TestExpectedNonNull;
+    // Timer remains in the list (removed=true) until next poll.
+    try std.testing.expect(loopRemoveTimer(loop, timer));
+    try std.testing.expectEqual(
+        @as(usize, 1),
+        loop.timers.items.len,
+    );
+}
+
+test "loop: removeTimer returns false for unknown timer" {
+    @import("allocator").init();
+    const loop = loopCreate() orelse
+        return error.TestExpectedNonNull;
+    defer loopDestroy(loop);
+
+    var fake = types.LoopTimer{
+        .callback = struct {
+            fn f(_: ?*anyopaque) callconv(.c) void {}
+        }.f,
+        .data = null,
+        .expiry = .{ .sec = 0, .nsec = 0 },
+        .removed = false,
+    };
+    try std.testing.expect(!loopRemoveTimer(loop, &fake));
+}
+
+test "loop: multiple fds independent remove" {
+    @import("allocator").init();
+    const loop = loopCreate() orelse
+        return error.TestExpectedNonNull;
+    defer loopDestroy(loop);
+
+    const cb: types.FdCallback = struct {
+        fn f(_: i32, _: i16, _: ?*anyopaque) callconv(.c) void {}
+    }.f;
+
+    loopAddFd(loop, 10, std.posix.POLL.IN, cb, null);
+    loopAddFd(loop, 20, std.posix.POLL.IN, cb, null);
+    loopAddFd(loop, 30, std.posix.POLL.IN, cb, null);
+    try std.testing.expectEqual(
+        @as(usize, 3),
+        loop.fd_events.items.len,
+    );
+
+    try std.testing.expect(loopRemoveFd(loop, 20));
+    try std.testing.expectEqual(
+        @as(usize, 2),
+        loop.fd_events.items.len,
+    );
+    // Remaining fds are 10 and 30; 20 is gone.
+    try std.testing.expect(!loopRemoveFd(loop, 20));
+}

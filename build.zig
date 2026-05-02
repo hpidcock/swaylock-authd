@@ -294,4 +294,65 @@ pub fn build(b: *std.Build) void {
         .root_module = exe_mod,
     });
     b.installArtifact(exe);
+
+    // Unit test step. Mirrors main_mod's configuration so that
+    // all imports and include paths resolve identically.
+    const test_mod = b.createModule(.{
+        .root_source_file = b.path("src/tests.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    test_mod.addImport(
+        "log_options",
+        log_options.createModule(),
+    );
+    test_mod.addImport("cairo_options", gfx_options_mod);
+    test_mod.addImport(
+        "background_image_options",
+        gfx_options_mod,
+    );
+    test_mod.addImport(
+        "render_options",
+        render_options.createModule(),
+    );
+    test_mod.addImport(
+        "main_options",
+        main_options.createModule(),
+    );
+    test_mod.addImport("allocator", b.createModule(.{
+        .root_source_file = b.path("src/allocator.zig"),
+    }));
+    test_mod.addImport("clap", clap_dep.module("clap"));
+    test_mod.addIncludePath(b.path("include"));
+    test_mod.addIncludePath(proto_h_dir);
+    for (sys_includes.items) |flag| {
+        const fi = std.mem.trim(u8, flag, " \t\n\r");
+        if (std.mem.startsWith(u8, fi, "-I")) {
+            const path = fi[2..];
+            test_mod.addSystemIncludePath(
+                .{ .cwd_relative = path },
+            );
+            if (std.fs.path.dirname(path)) |parent| {
+                test_mod.addSystemIncludePath(
+                    .{ .cwd_relative = parent },
+                );
+            }
+        }
+    }
+    test_mod.linkSystemLibrary("wayland-client", .{});
+    test_mod.linkSystemLibrary("xkbcommon", .{});
+    test_mod.linkSystemLibrary("cairo", .{});
+    if (have_gdk_pixbuf)
+        test_mod.linkSystemLibrary("gdk-pixbuf-2.0", .{});
+    test_mod.linkSystemLibrary("m", .{ .use_pkg_config = .no });
+    test_mod.linkSystemLibrary("rt", .{ .use_pkg_config = .no });
+
+    const unit_tests = b.addTest(.{
+        .name = "swaylock-tests",
+        .root_module = test_mod,
+    });
+    const run_unit_tests = b.addRunArtifact(unit_tests);
+    const test_step = b.step("test", "Run unit tests");
+    test_step.dependOn(&run_unit_tests.step);
 }

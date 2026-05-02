@@ -70,3 +70,123 @@ fn encodeManual(str: []u8, ch_in: u32) usize {
     str[0] = @as(u8, @truncate(ch)) | first;
     return len;
 }
+
+test "utf8LastSize: empty string" {
+    const s: [*:0]const u8 = "";
+    try std.testing.expectEqual(@as(i32, 0), utf8LastSize(s));
+}
+
+test "utf8LastSize: single ASCII byte" {
+    const s: [*:0]const u8 = "a";
+    try std.testing.expectEqual(@as(i32, 1), utf8LastSize(s));
+}
+
+test "utf8LastSize: 2-byte codepoint" {
+    // U+00E9 = é, encoded as 0xC3 0xA9
+    const s: [*:0]const u8 = "\xc3\xa9";
+    try std.testing.expectEqual(@as(i32, 2), utf8LastSize(s));
+}
+
+test "utf8LastSize: 3-byte codepoint" {
+    // U+4E2D = 中, encoded as 0xE4 0xB8 0xAD
+    const s: [*:0]const u8 = "\xe4\xb8\xad";
+    try std.testing.expectEqual(@as(i32, 3), utf8LastSize(s));
+}
+
+test "utf8LastSize: 4-byte codepoint" {
+    // U+1F600 = 😀, encoded as 0xF0 0x9F 0x98 0x80
+    const s: [*:0]const u8 = "\xf0\x9f\x98\x80";
+    try std.testing.expectEqual(@as(i32, 4), utf8LastSize(s));
+}
+
+test "utf8LastSize: ASCII then multi-byte last" {
+    // "a" followed by U+00E9 é — last char is 2 bytes
+    const s: [*:0]const u8 = "a\xc3\xa9";
+    try std.testing.expectEqual(@as(i32, 2), utf8LastSize(s));
+}
+
+test "utf8LastSize: multi-byte then ASCII last" {
+    // U+00E9 é followed by "z" — last char is 1 byte
+    const s: [*:0]const u8 = "\xc3\xa9z";
+    try std.testing.expectEqual(@as(i32, 1), utf8LastSize(s));
+}
+
+test "utf8Chsize: ASCII range" {
+    try std.testing.expectEqual(@as(usize, 1), utf8Chsize(0x00));
+    try std.testing.expectEqual(@as(usize, 1), utf8Chsize(0x7F));
+}
+
+test "utf8Chsize: 2-byte range" {
+    try std.testing.expectEqual(@as(usize, 2), utf8Chsize(0x80));
+    try std.testing.expectEqual(@as(usize, 2), utf8Chsize(0x7FF));
+}
+
+test "utf8Chsize: 3-byte range" {
+    try std.testing.expectEqual(@as(usize, 3), utf8Chsize(0x800));
+    try std.testing.expectEqual(@as(usize, 3), utf8Chsize(0xFFFF));
+}
+
+test "utf8Chsize: 4-byte range" {
+    try std.testing.expectEqual(@as(usize, 4), utf8Chsize(0x10000));
+    try std.testing.expectEqual(@as(usize, 4), utf8Chsize(0x10FFFF));
+}
+
+test "utf8Chsize: beyond Unicode range falls back to 4" {
+    try std.testing.expectEqual(@as(usize, 4), utf8Chsize(0x110000));
+    try std.testing.expectEqual(
+        @as(usize, 4),
+        utf8Chsize(0xFFFFFFFF),
+    );
+}
+
+test "utf8Encode: ASCII codepoint" {
+    var buf: [4]u8 = undefined;
+    const n = utf8Encode(&buf, 'A');
+    try std.testing.expectEqual(@as(usize, 1), n);
+    try std.testing.expectEqual(@as(u8, 'A'), buf[0]);
+}
+
+test "utf8Encode: 2-byte codepoint" {
+    var buf: [4]u8 = undefined;
+    // U+00E9 = é
+    const n = utf8Encode(&buf, 0xE9);
+    try std.testing.expectEqual(@as(usize, 2), n);
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 0xC3, 0xA9 },
+        buf[0..2],
+    );
+}
+
+test "utf8Encode: 3-byte codepoint" {
+    var buf: [4]u8 = undefined;
+    // U+4E2D = 中
+    const n = utf8Encode(&buf, 0x4E2D);
+    try std.testing.expectEqual(@as(usize, 3), n);
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 0xE4, 0xB8, 0xAD },
+        buf[0..3],
+    );
+}
+
+test "utf8Encode: 4-byte codepoint" {
+    var buf: [4]u8 = undefined;
+    // U+1F600 = 😀
+    const n = utf8Encode(&buf, 0x1F600);
+    try std.testing.expectEqual(@as(usize, 4), n);
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 0xF0, 0x9F, 0x98, 0x80 },
+        buf[0..4],
+    );
+}
+
+test "utf8Encode: size matches utf8Chsize" {
+    const codepoints = [_]u32{ 0, 0x7F, 0x80, 0x7FF, 0x800, 0xFFFF, 0x10000, 0x10FFFF };
+    for (codepoints) |cp| {
+        var buf: [4]u8 = undefined;
+        const encoded = utf8Encode(&buf, cp);
+        try std.testing.expectEqual(utf8Chsize(cp), encoded);
+    }
+}

@@ -152,3 +152,58 @@ fn stripPath(filepath: []const u8) []const u8 {
     {}
     return filepath[i..];
 }
+
+test "stripPath: no leading dot returns unchanged" {
+    try std.testing.expectEqualStrings(
+        "foo.zig",
+        stripPath("foo.zig"),
+    );
+    try std.testing.expectEqualStrings(
+        "src/foo.zig",
+        stripPath("src/foo.zig"),
+    );
+}
+
+test "stripPath: leading ./ is stripped" {
+    try std.testing.expectEqualStrings(
+        "src/foo.zig",
+        stripPath("./src/foo.zig"),
+    );
+    try std.testing.expectEqualStrings(
+        "foo.zig",
+        stripPath("./foo.zig"),
+    );
+}
+
+test "stripPath: relative parent prefix is stripped" {
+    // All leading dots and slashes are consumed together,
+    // matching the original C behaviour for "../" paths.
+    try std.testing.expectEqualStrings(
+        "foo.zig",
+        stripPath("../foo.zig"),
+    );
+}
+
+test "stripPath: empty string" {
+    try std.testing.expectEqualStrings("", stripPath(""));
+}
+
+test "stripPath: only dots and slashes yields empty" {
+    try std.testing.expectEqualStrings("", stripPath("./"));
+    try std.testing.expectEqualStrings("", stripPath(".//"));
+}
+
+test "logInit: accepts valid verbosity levels" {
+    // Verify logInit does not crash for any valid level.
+    logInit(LogImportance.silent);
+    logInit(LogImportance.err);
+    logInit(LogImportance.info);
+    logInit(LogImportance.debug);
+}
+
+test "logInit: clamps out-of-range to debug" {
+    // LogImportance.last is >= last, so it should be clamped.
+    logInit(LogImportance.last);
+    // Reset to a known state for other tests.
+    logInit(LogImportance.err);
+}

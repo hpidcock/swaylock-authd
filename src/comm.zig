@@ -197,6 +197,64 @@ pub fn writeCommPassword(pw: *types.SwaylockPassword) bool {
     return ok;
 }
 
+test "loadLe32: decodes little-endian bytes" {
+    const b = [4]u8{ 0x01, 0x02, 0x03, 0x04 };
+    try std.testing.expectEqual(
+        @as(u32, 0x04030201),
+        loadLe32(&b),
+    );
+}
+
+test "loadLe32: zero bytes decode to zero" {
+    const b = [4]u8{ 0x00, 0x00, 0x00, 0x00 };
+    try std.testing.expectEqual(@as(u32, 0), loadLe32(&b));
+}
+
+test "loadLe32: max u32 value" {
+    const b = [4]u8{ 0xFF, 0xFF, 0xFF, 0xFF };
+    try std.testing.expectEqual(
+        @as(u32, 0xFFFFFFFF),
+        loadLe32(&b),
+    );
+}
+
+test "storeLe32: encodes to little-endian bytes" {
+    var b: [4]u8 = undefined;
+    storeLe32(&b, 0x04030201);
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 0x01, 0x02, 0x03, 0x04 },
+        &b,
+    );
+}
+
+test "storeLe32: zero encodes to all zero bytes" {
+    var b: [4]u8 = undefined;
+    storeLe32(&b, 0);
+    try std.testing.expectEqualSlices(
+        u8,
+        &.{ 0x00, 0x00, 0x00, 0x00 },
+        &b,
+    );
+}
+
+test "loadLe32 and storeLe32: roundtrip" {
+    const values = [_]u32{
+        0x00000000,
+        0x000000FF,
+        0x0000FF00,
+        0x00FF0000,
+        0xFF000000,
+        0xDEADBEEF,
+        0xFFFFFFFF,
+    };
+    for (values) |v| {
+        var b: [4]u8 = undefined;
+        storeLe32(&b, v);
+        try std.testing.expectEqual(v, loadLe32(&b));
+    }
+}
+
 /// Forks the comm child process and sets up pipe fds.
 pub fn spawnCommChild(child_fn: *const fn () void) bool {
     const fds0 = std.posix.pipe() catch |err| {

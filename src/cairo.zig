@@ -1,5 +1,6 @@
 //! Cairo helper wrappers and GdkPixbuf FFI declarations.
 
+const std = @import("std");
 const builtin = @import("builtin");
 const opts = @import("cairo_options");
 
@@ -138,3 +139,61 @@ pub const GdkExports = if (opts.have_gdk_pixbuf) struct {
         return cs;
     }
 } else struct {};
+
+test "premulAlpha: zero alpha yields zero" {
+    if (comptime !opts.have_gdk_pixbuf) return error.SkipZigTest;
+    try std.testing.expectEqual(
+        @as(u8, 0),
+        GdkExports.premulAlpha(255, 0),
+    );
+    try std.testing.expectEqual(
+        @as(u8, 0),
+        GdkExports.premulAlpha(0, 0),
+    );
+}
+
+test "premulAlpha: full alpha is identity" {
+    if (comptime !opts.have_gdk_pixbuf) return error.SkipZigTest;
+    // alpha=255 means fully opaque; value should pass through.
+    try std.testing.expectEqual(
+        @as(u8, 255),
+        GdkExports.premulAlpha(255, 255),
+    );
+    try std.testing.expectEqual(
+        @as(u8, 128),
+        GdkExports.premulAlpha(128, 255),
+    );
+    try std.testing.expectEqual(
+        @as(u8, 0),
+        GdkExports.premulAlpha(0, 255),
+    );
+}
+
+test "premulAlpha: half alpha halves the channel" {
+    if (comptime !opts.have_gdk_pixbuf) return error.SkipZigTest;
+    // 255 * 128: z = 32640 + 128 = 32768
+    // (z + (z>>8)) >> 8 = (32768 + 128) >> 8 = 32896 >> 8 = 128
+    try std.testing.expectEqual(
+        @as(u8, 128),
+        GdkExports.premulAlpha(255, 128),
+    );
+    // 128 * 128: z = 16384 + 128 = 16512
+    // (z + (z>>8)) >> 8 = (16512 + 64) >> 8 = 16576 >> 8 = 64
+    try std.testing.expectEqual(
+        @as(u8, 64),
+        GdkExports.premulAlpha(128, 128),
+    );
+}
+
+test "premulAlpha: result never exceeds channel value" {
+    if (comptime !opts.have_gdk_pixbuf) return error.SkipZigTest;
+    // Premultiplied result must always be <= the input channel.
+    const channels = [_]u8{ 0, 1, 63, 127, 128, 200, 254, 255 };
+    const alphas = [_]u8{ 0, 1, 63, 127, 128, 200, 254, 255 };
+    for (channels) |ch| {
+        for (alphas) |a| {
+            const result = GdkExports.premulAlpha(ch, a);
+            try std.testing.expect(result <= ch);
+        }
+    }
+}
