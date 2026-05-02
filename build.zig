@@ -1,9 +1,6 @@
-//! Build script for swaylock. Compiles all C sources via the system
-//! C compiler (cc) using addSystemCommand, with pkg-config supplying
-//! system include paths. This avoids Zig 0.16's aro C-frontend bugs
-//! that manifest in --listen=- server mode.
-//! Only main.zig is declared as a module; all other local .zig files
-//! are reached via @import chains from main.zig.
+//! Build script for swaylock.
+//! Compiles C sources via system cc, with pkg-config supplying
+//! include paths. Avoids Zig 0.16's aro frontend issues.
 
 const std = @import("std");
 
@@ -52,7 +49,7 @@ pub fn build(b: *std.Build) void {
         " \t\n\r",
     );
 
-    // Generate ext-session-lock-v1 protocol glue via wayland-scanner.
+    // Generate ext-session-lock-v1 protocol glue.
     const ext_lock_xml = b.fmt(
         "{s}/staging/ext-session-lock/ext-session-lock-v1.xml",
         .{wl_proto_dir},
@@ -75,8 +72,7 @@ pub fn build(b: *std.Build) void {
     );
     const proto_h_dir = proto_h.dirname();
 
-    // Query pkg-config for system include paths at configure time.
-    // The list of packages varies with enabled features.
+    // Query pkg-config for system include paths.
     var pc_args: std.ArrayListUnmanaged([]const u8) = .{
         .items = &.{},
         .capacity = 0,
@@ -98,7 +94,7 @@ pub fn build(b: *std.Build) void {
         pc_args.toOwnedSlice(b.allocator) catch @panic("OOM"),
     );
 
-    // Parse whitespace-separated -I flags from pkg-config output.
+    // Parse -I flags from pkg-config output.
     var sys_includes: std.ArrayListUnmanaged([]const u8) = .{
         .items = &.{},
         .capacity = 0,
@@ -110,9 +106,7 @@ pub fn build(b: *std.Build) void {
             sys_includes.append(b.allocator, f) catch @panic("OOM");
     }
 
-    // Full C flags: system includes first, then compile flags and
-    // feature defines. include/config.h provides #ifndef-guarded
-    // defaults; the -D flags here take precedence.
+    // Assemble C flags: system includes, then defines.
     var flags: std.ArrayListUnmanaged([]const u8) = .{
         .items = &.{},
         .capacity = 0,
@@ -160,7 +154,7 @@ pub fn build(b: *std.Build) void {
             "-DHAVE_DEBUG_UNLOCK_ON_CRASH=0",
     ) catch @panic("OOM");
 
-    // Protocol glue only needs basic flags, no feature defines.
+    // Protocol glue needs only basic flags.
     var proto_flags_list: std.ArrayListUnmanaged([]const u8) = .{
         .items = &.{},
         .capacity = 0,
@@ -176,10 +170,7 @@ pub fn build(b: *std.Build) void {
     const proto_flags =
         proto_flags_list.toOwnedSlice(b.allocator) catch @panic("OOM");
 
-    // Ctx compiles a single C file via the system cc, bypassing Zig's
-    // aro C frontend entirely. addPrefixedDirectoryArg resolves
-    // LazyPaths at make time, so the generated protocol header becomes
-    // a proper build-graph dependency.
+    // Compile a single C file via system cc, bypassing aro.
     const Ctx = struct {
         b: *std.Build,
         proto_h_dir: std.Build.LazyPath,
@@ -191,9 +182,7 @@ pub fn build(b: *std.Build) void {
             file_flags: []const []const u8,
         ) std.Build.LazyPath {
             const cmd = ctx.b.addSystemCommand(&.{ "cc", "-c" });
-            // Local include dirs must come first so that quoted
-            // includes like #include "cairo.h" resolve to our headers
-            // in include/, not to system headers of the same name.
+            // Local includes first for correct header resolution.
             cmd.addPrefixedDirectoryArg("-I", ctx.b.path("include"));
             cmd.addPrefixedDirectoryArg("-I", ctx.proto_h_dir);
             for (file_flags) |flag| cmd.addArg(flag);
@@ -213,8 +202,7 @@ pub fn build(b: *std.Build) void {
     const log_options = b.addOptions();
     log_options.addOption(bool, "have_debug_overlay", debug_overlay);
 
-    // Shared gdk-pixbuf option module — used by both cairo.zig and
-    // background-image.zig.
+    // Shared gdk-pixbuf option for cairo.zig and background-image.zig.
     const gfx_options = b.addOptions();
     gfx_options.addOption(bool, "have_gdk_pixbuf", have_gdk_pixbuf);
     const gfx_options_mod = gfx_options.createModule();
@@ -233,10 +221,8 @@ pub fn build(b: *std.Build) void {
     main_options.addOption([]const u8, "sysconfdir", sysconfdir);
     main_options.addOption([]const u8, "swaylock_version", "1.0.0");
 
-    // main_mod is the only Zig module declared here. All other local
-    // .zig files are imported directly via @import("foo.zig") chains
-    // originating from main.zig, so they share this module's include
-    // paths and options imports automatically.
+    // Single declared Zig module; other .zig files are reached
+    // via @import chains from main.zig.
     const main_mod = b.createModule(.{
         .root_source_file = b.path("main.zig"),
         .target = target,
@@ -275,10 +261,8 @@ pub fn build(b: *std.Build) void {
         .root_module = main_mod,
     });
 
-    // exe_mod is a root-less linker wrapper. main.zig uses
-    // `export fn main` (C-ABI), so it must be compiled as a plain
-    // object rather than as the Zig root; otherwise std.start.zig
-    // would be injected and look for `pub fn main`.
+    // Linker wrapper module. main.zig exports a C-ABI main, so it
+    // is compiled as an object to avoid std.start.zig injection.
     const exe_mod = b.createModule(.{
         .target = target,
         .optimize = optimize,
@@ -301,8 +285,7 @@ pub fn build(b: *std.Build) void {
         exe_mod.linkSystemLibrary("gdk-pixbuf-2.0", .{});
     if (have_qrencode)
         exe_mod.linkSystemLibrary("libqrencode", .{});
-    // libm and librt are glibc components that still need explicit
-    // link flags in some configurations.
+    // Explicit glibc component linkage for some configurations.
     exe_mod.linkSystemLibrary("m", .{ .use_pkg_config = .no });
     exe_mod.linkSystemLibrary("rt", .{ .use_pkg_config = .no });
 

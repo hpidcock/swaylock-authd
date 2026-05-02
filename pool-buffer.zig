@@ -1,17 +1,13 @@
-//! pool-buffer.zig – Zig port of pool-buffer.c.
-//! Manages pairs of Wayland shared-memory buffers backed by
-//! Cairo image surfaces.
+//! Wayland shared-memory double-buffered pool with Cairo surfaces.
 
 const std = @import("std");
 const types = @import("types.zig");
 
 const wl = types.c;
 
-/// Opens an anonymous POSIX shared-memory object by trying
-/// time-stamped names until one does not already exist.
+/// Opens an anonymous POSIX shm object. Retries with unique names.
 /// Returns a file descriptor on success, or -1 on failure.
 fn anonymous_shm_open() i32 {
-    // O_RDWR | O_CREAT | O_EXCL packed into a c_int.
     const flags: c_int = @bitCast(@as(u32, @bitCast(
         std.posix.O{ .ACCMODE = .RDWR, .CREAT = true, .EXCL = true },
     )));
@@ -19,13 +15,12 @@ fn anonymous_shm_open() i32 {
     while (retries > 0) : (retries -= 1) {
         const ts = std.posix.clock_gettime(.MONOTONIC) catch continue;
         const pid = std.c.getpid();
-        // Truncate nsec to u32 without panicking on a
-        // signed-to-unsigned conversion.
+
         const nsec: u32 = @truncate(
             @as(u64, @bitCast(@as(i64, ts.nsec))),
         );
         var name: [50]u8 = undefined;
-        // bufPrintZ guarantees null-termination for shm_open.
+
         const z = std.fmt.bufPrintZ(
             &name,
             "/swaylock-{x}-{x}",
@@ -54,8 +49,7 @@ const buffer_listener: wl.wl_buffer_listener = .{
     .release = buffer_release,
 };
 
-/// Creates a Wayland shared-memory buffer of the given dimensions
-/// and pixel format, populating buf in place.
+/// Allocates a wl_buffer backed by shm with a Cairo surface.
 /// Returns buf on success, or null on failure.
 pub fn createBuffer(
     shm: ?*wl.wl_shm,
@@ -122,7 +116,7 @@ pub fn createBuffer(
     return buf;
 }
 
-/// Releases all resources held by buffer and zeroes the struct.
+/// Releases all resources held by buffer and zeros the struct.
 pub fn destroyBuffer(buffer: *types.PoolBuffer) void {
     if (buffer.buffer != null)
         wl.wl_buffer_destroy(buffer.buffer);
@@ -138,9 +132,8 @@ pub fn destroyBuffer(buffer: *types.PoolBuffer) void {
     buffer.* = std.mem.zeroes(types.PoolBuffer);
 }
 
-/// Returns a pointer to a non-busy buffer from pool[0..2],
-/// allocating or reallocating it if its dimensions have changed.
-/// Returns null if all buffers are busy or allocation fails.
+/// Returns a non-busy buffer from the pool, reallocating if
+/// dimensions changed. Returns null if unavailable.
 pub fn getNextBuffer(
     shm: ?*wl.wl_shm,
     pool: [*]types.PoolBuffer,

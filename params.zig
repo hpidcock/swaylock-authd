@@ -1,4 +1,4 @@
-//! CLI parameter definitions for swaylock.
+//! CLI parameter definitions and argument parsing.
 
 const std = @import("std");
 const clap = @import("clap");
@@ -10,8 +10,8 @@ const background_image = @import("background-image.zig");
 
 const c = types.c;
 
-/// Typed IDs for all CLI options. Short options use their ASCII
-/// value; long-only options are assigned values starting at 256.
+/// Option identifiers. Short options use ASCII values;
+/// long-only options start at 256.
 pub const OptId = enum(u16) {
     config = 'C',
     color = 'c',
@@ -70,7 +70,7 @@ pub const OptId = enum(u16) {
     steal_unlock,
 };
 
-/// All recognised CLI parameters, keyed by OptId.
+/// All recognised CLI parameters keyed by OptId.
 pub const params = [_]clap.Param(OptId){
     .{ .id = .config, .names = .{ .short = 'C', .long = "config" }, .takes_value = .one },
     .{ .id = .color, .names = .{ .short = 'c', .long = "color" }, .takes_value = .one },
@@ -632,7 +632,7 @@ fn loadImage(arg: [*c]u8, st: *types.State) void {
         image.output_name = null;
         image.path = @ptrCast(c.strdup(arg));
     }
-    // Replace any existing image for the same output.
+    // Replace any existing image for this output.
     for (st.images.items, 0..) |iter_image, idx| {
         if (lenientStrcmp(
             iter_image.output_name,
@@ -663,7 +663,7 @@ fn loadImage(arg: [*c]u8, st: *types.State) void {
         allocator.destroy(iter_image);
         break;
     }
-    // Escape double spaces so wordexp handles the path correctly.
+    // Escape double spaces for correct wordexp expansion.
     while (c.strstr(@ptrCast(image.path), "  ") != null) {
         const old_len = c.strlen(@ptrCast(image.path));
         image.path = @ptrCast(

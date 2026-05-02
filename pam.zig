@@ -1,4 +1,3 @@
-//! pam.zig – Zig port of pam.c.
 //! PAM authentication and GDM/authd JSON protocol handling.
 
 const std = @import("std");
@@ -15,15 +14,14 @@ const c = @cImport({
     @cInclude("stdlib.h");
 });
 
-// GDM PAM extension types – derived from gdm-custom-json-pam-extension.h
-// and gdm-pam-extensions-common.h.  The GNU statement-expression macros
-// from those headers are re-implemented below as plain Zig functions.
+// GDM PAM extension types from gdm-pam-extensions-common.h and
+// gdm-custom-json-pam-extension.h, re-implemented in Zig.
 const GdmPamExtensionMessage = extern struct {
     length: u32,
     type: u8,
 };
 
-/// GDM PAM extension JSON protocol message structure.
+/// GDM PAM extension JSON protocol message.
 const GdmPamExtensionJSONProtocol = extern struct {
     header: GdmPamExtensionMessage,
     protocol_name: [64]u8,
@@ -36,12 +34,11 @@ const authd_gdm_json_proto_version: c_uint = 1;
 const gdm_pam_extension_custom_json =
     "org.gnome.DisplayManager.UserVerifier.CustomJSON";
 
-// Static buffer for putenv – must persist for the process lifetime
-// because putenv does not copy its argument.
+// Static putenv buffer; must persist because putenv does not copy.
 var gdm_pam_ext_env = std.mem.zeroes([4096]u8);
 
-/// Advertise the authd GDM JSON extension to any PAM module loaded in
-/// this process by setting GDM_SUPPORTED_PAM_EXTENSIONS.
+/// Sets GDM_SUPPORTED_PAM_EXTENSIONS so PAM modules can use
+/// the authd GDM JSON extension.
 fn gdmAdvertiseExtensions() void {
     const env_str = "GDM_SUPPORTED_PAM_EXTENSIONS=" ++
         gdm_pam_extension_custom_json;
@@ -50,8 +47,7 @@ fn gdmAdvertiseExtensions() void {
     _ = c.putenv(@as([*c]u8, @ptrCast(&gdm_pam_ext_env)));
 }
 
-// Look up the index of name within GDM_SUPPORTED_PAM_EXTENSIONS.
-// Returns null when the variable is unset or the name is absent.
+// Looks up the type index of name in GDM_SUPPORTED_PAM_EXTENSIONS.
 fn gdmLookUpType(name: []const u8) ?u8 {
     const env_ptr = c.getenv(
         "GDM_SUPPORTED_PAM_EXTENSIONS",
@@ -70,9 +66,8 @@ fn gdmLookUpType(name: []const u8) ?u8 {
     return null;
 }
 
-/// Initialise a GDM PAM extension JSON protocol request with the authd
-/// protocol name, version and the given JSON string.  The json pointer
-/// is stored as-is; the caller must free it separately.
+/// Populates a GDM PAM extension request with the authd protocol
+/// name, version, and the given JSON string.
 fn gdmRequestInit(
     req: *GdmPamExtensionJSONProtocol,
     json: [*c]u8,
@@ -96,16 +91,14 @@ fn gdmRequestInit(
     req.json = json;
 }
 
-/// Returns true when the GDM PAM message carries the expected authd
-/// protocol name ("com.ubuntu.authd.gdm") and version (1).
+/// Validates protocol name and version in a GDM message.
 fn gdmMessageIsValid(msg: *const GdmPamExtensionJSONProtocol) bool {
     if (msg.version != authd_gdm_json_proto_version) return false;
     const name = std.mem.sliceTo(&msg.protocol_name, 0);
     return std.mem.eql(u8, name, authd_gdm_json_proto_name);
 }
 
-// jsonStringifyAllocBytes serialises v to JSON, returning an
-// allocator-owned []u8. Compatible with Zig 0.14 and 0.16.
+// Serialises v to JSON as an allocator-owned []u8.
 fn jsonStringifyAllocBytes(
     alloc: std.mem.Allocator,
     v: anytype,
@@ -117,9 +110,8 @@ fn jsonStringifyAllocBytes(
     }
 }
 
-// jsonStringifyC serialises v to JSON and returns a c_allocator-owned
-// null-terminated C string, or null on allocation failure.
-// The caller must free with std.heap.c_allocator.free(std.mem.span(p)).
+// Serialises v to JSON as a c_allocator-owned C string.
+// Caller frees via std.heap.c_allocator.free(std.mem.span(p)).
 fn jsonStringifyC(v: anytype) ?[*:0]u8 {
     const bytes = jsonStringifyAllocBytes(std.heap.c_allocator, v) catch
         return null;
@@ -127,7 +119,7 @@ fn jsonStringifyC(v: anytype) ?[*:0]u8 {
     return (std.heap.c_allocator.dupeZ(u8, bytes) catch return null).ptr;
 }
 
-/// Free all heap-allocated fields of a ui-layout and zero the struct.
+/// Frees all heap fields of a ui-layout and zeros the struct.
 pub fn authdUiLayoutClear(layout: *types.AuthdUiLayout) void {
     if (layout.type) |p|
         std.heap.c_allocator.free(std.mem.span(p));
@@ -144,7 +136,7 @@ pub fn authdUiLayoutClear(layout: *types.AuthdUiLayout) void {
     layout.* = std.mem.zeroes(types.AuthdUiLayout);
 }
 
-/// Free a heap-allocated slice of authd_broker structs.
+/// Frees a heap-allocated slice of authd broker structs.
 pub fn authdBrokersFree(brokers: []types.AuthdBroker) void {
     for (brokers) |b| {
         if (b.id) |p|
@@ -155,7 +147,7 @@ pub fn authdBrokersFree(brokers: []types.AuthdBroker) void {
     if (brokers.len > 0) std.c.free(brokers.ptr);
 }
 
-/// Free a heap-allocated slice of authd_auth_mode structs.
+/// Frees a heap-allocated slice of authd auth-mode structs.
 pub fn authdAuthModesFree(modes: []types.AuthdAuthMode) void {
     for (modes) |m| {
         if (m.id) |p|
@@ -166,9 +158,8 @@ pub fn authdAuthModesFree(modes: []types.AuthdAuthMode) void {
     if (modes.len > 0) std.c.free(modes.ptr);
 }
 
-/// Return a human-readable description for a PAM status code.
-/// The returned pointer is valid for the lifetime of the process;
-/// for the default case it points into a static buffer.
+/// Returns a human-readable description for a PAM status code.
+/// The pointer is valid for the lifetime of the process.
 fn getPamAuthError(pam_status: i32) [*:0]const u8 {
     return switch (pam_status) {
         c.PAM_AUTH_ERR => "invalid credentials",
@@ -192,9 +183,8 @@ fn getPamAuthError(pam_status: i32) [*:0]const u8 {
     };
 }
 
-/// State threaded through the PAM conversation callback.
-/// pending[0..pending_count] holds queued GDM events for the next
-/// pollResponse.
+/// Conversation callback state. pending[0..pending_count] holds
+/// queued GDM events for the next pollResponse.
 const ConvState = struct {
     pending: [64]GdmEvent = undefined,
     pending_count: usize = 0,
@@ -202,15 +192,13 @@ const ConvState = struct {
     username: [*:0]const u8,
 };
 
-/// Send a byte slice over the IPC channel then free it.
+// Sends bytes over the IPC channel then frees the slice.
 fn commSend(msg_type: u8, bytes: []u8) void {
     _ = comm.commChildWrite(msg_type, bytes);
     std.heap.c_allocator.free(bytes);
 }
 
-// GDM/authd JSON protocol types.
-
-/// "form" layout descriptor in the supportedUiLayouts array.
+/// Form layout descriptor for supportedUiLayouts.
 const UiLayoutForm = struct {
     type: []const u8 = "form",
     label: []const u8 = "required",
@@ -220,7 +208,7 @@ const UiLayoutForm = struct {
     button: []const u8 = "optional",
 };
 
-/// "newpassword" layout descriptor in the supportedUiLayouts array.
+/// New-password layout descriptor for supportedUiLayouts.
 const UiLayoutNewPassword = struct {
     type: []const u8 = "newpassword",
     label: []const u8 = "required",
@@ -229,7 +217,7 @@ const UiLayoutNewPassword = struct {
     button: []const u8 = "optional",
 };
 
-/// "qrcode" layout descriptor in the supportedUiLayouts array.
+/// QR code layout descriptor for supportedUiLayouts.
 const UiLayoutQrCode = struct {
     type: []const u8 = "qrcode",
     content: []const u8 = "required",
@@ -240,16 +228,15 @@ const UiLayoutQrCode = struct {
     rendersQrcode: bool = true,
 };
 
-/// Direct responses to GDM binary prompts.
-/// Each variant serialises as {"type":"<tag>","<tag>":<payload>}.
-/// eventAck carries no payload field.
+/// Responses to GDM binary prompts. Each variant serialises as
+/// {"type":"<tag>","<tag>":<payload>}.
 const GdmResponse = union(enum) {
     hello: struct { version: u32 = 1 },
     eventAck,
     response: struct {
         type: []const u8 = "uiLayoutCapabilities",
         uiLayoutCapabilities: struct {
-            /// Tuple-struct serialises as a JSON array.
+            /// Serialises as a JSON array.
             supportedUiLayouts: struct {
                 UiLayoutForm,
                 UiLayoutNewPassword,
@@ -257,7 +244,7 @@ const GdmResponse = union(enum) {
             } = .{ .{}, .{}, .{} },
         } = .{},
     },
-    /// Slice is borrowed from ConvState.pending; not freed here.
+    /// Borrowed from ConvState.pending; not freed here.
     pollResponse: []const GdmEvent,
 
     pub fn jsonStringify(self: @This(), jws: anytype) !void {
@@ -275,12 +262,10 @@ const GdmResponse = union(enum) {
     }
 };
 
-/// Events queued for the next pollResponse.
-/// Each variant serialises as {"type":"<tag>","<tag>":<payload>}.
-/// brokerSelected, authModeSelected and isAuthenticatedRequested own
-/// their string data; call deinit after use.
+/// Events queued for the next pollResponse. Variants that own
+/// string data must have deinit called after use.
 const GdmEvent = union(enum) {
-    /// userId is borrowed from ConvState.username; not freed.
+    /// Borrowed from ConvState.username; not freed.
     userSelected: struct { userId: []const u8 },
     brokerSelected: struct { brokerId: []u8 },
     authModeSelected: struct { authModeId: []u8 },
@@ -290,7 +275,7 @@ const GdmEvent = union(enum) {
         authenticationData: struct { secret: []u8 },
     },
 
-    /// Free owned string data; secrets are zeroed before freeing.
+    /// Frees owned data; secrets are zeroed first.
     fn deinit(self: GdmEvent) void {
         switch (self) {
             .brokerSelected => |v| std.heap.c_allocator.free(v.brokerId),
@@ -318,8 +303,8 @@ const GdmEvent = union(enum) {
     }
 };
 
-/// Process a GDM/authd JSON message and return a heap-allocated
-/// null-terminated response string.  The caller must free the result.
+/// Processes a GDM/authd JSON message and returns a heap-allocated
+/// null-terminated response. Caller must free the result.
 fn handleGdmJson(
     state: *ConvState,
     json_in: [*c]const u8,
@@ -374,7 +359,7 @@ fn handleGdmJson(
     } else if (std.mem.eql(u8, tp, "event")) {
         const event_obj = switch (root_obj.get("event") orelse .null) {
             .object => |o| o,
-            // No event object → nothing to process, reply with eventAck.
+            // No event object; reply with eventAck.
             else => return jsonStringifyC(GdmResponse{ .eventAck = {} }),
         };
         const etype: []const u8 = switch (event_obj.get("type") orelse .null) {
@@ -477,7 +462,7 @@ fn handleGdmJson(
                     stage_byte = @intCast(
                         @intFromEnum(types.AuthdStage.challenge),
                     );
-                // "userSelection" → AUTHD_STAGE_NONE (default)
+                // "userSelection" maps to AUTHD_STAGE_NONE.
             }
             const stage_byte_array: [*]const u8 = @ptrCast(&stage_byte);
             _ = comm.commChildWrite(
@@ -522,7 +507,7 @@ fn handleGdmJson(
                 commSend(types.CommMsg.auth_event, bytes);
             }
         }
-        // All event subtypes reply with eventAck.
+        // All event subtypes get an eventAck reply.
         return jsonStringifyC(GdmResponse{ .eventAck = {} });
     } else if (std.mem.eql(u8, tp, "poll")) {
         if (!state.user_selected_sent) {
@@ -584,7 +569,7 @@ fn handleGdmJson(
                         u8,
                         std.mem.sliceTo(r.payload, 0),
                     ) catch break :blk null;
-                    // Clear the original credential before freeing.
+                    // Zero the original credential before freeing.
                     password_buffer.zero(r.payload);
                     break :blk GdmEvent{
                         .isAuthenticatedRequested = .{
@@ -616,8 +601,8 @@ fn handleGdmJson(
     }
 }
 
-/// PAM conversation callback.  Handles password prompts, GDM binary
-/// prompts, and informational messages from the PAM stack.
+/// PAM conversation callback. Handles password prompts, GDM
+/// binary prompts, and informational messages.
 fn handleConversation(
     num_msg: c_int,
     msg: [*c][*c]const c.pam_message,
@@ -650,11 +635,8 @@ fn handleConversation(
             c.PAM_PROMPT_ECHO_OFF,
             c.PAM_PROMPT_ECHO_ON,
             => {
-                // Tell the main process we are waiting for a new
-                // credential.  If it was in AUTH_STATE_VALIDATING
-                // this transitions it to AUTH_STATE_INVALID
-                // ("Wrong") and then back to IDLE so the user
-                // can type again.
+                // Notify main we need a credential. Transitions
+                // validating -> invalid -> idle if needed.
                 const stage_byte: [1]u8 = .{@intCast(
                     @intFromEnum(types.AuthdStage.challenge),
                 )};
@@ -714,8 +696,8 @@ fn handleConversation(
                     "(null)"},
             ),
             else => {
-                // PAM_BINARY_PROMPT is a Linux-PAM extension used
-                // by the authd GDM JSON protocol.
+                // PAM_BINARY_PROMPT: Linux-PAM extension for the
+                // authd GDM JSON protocol.
                 if (comptime @hasDecl(c, "PAM_BINARY_PROMPT")) {
                     if (msg[idx].*.msg_style == c.PAM_BINARY_PROMPT) {
                         const ext: *const GdmPamExtensionJSONProtocol =
@@ -760,14 +742,14 @@ fn handleConversation(
     return c.PAM_SUCCESS;
 }
 
-/// Initialise the password backend; spawns the comm child process.
+/// Spawns the comm child process for PAM authentication.
 pub fn initializePwBackend(argc: c_int, argv: [*c][*c]u8) void {
     _ = argc;
     _ = argv;
     if (!comm.spawnCommChild(runPwBackendChild)) std.process.exit(1);
 }
 
-/// Run the PAM authentication loop in the child process.  Never returns.
+/// Runs the PAM authentication loop in the child. Never returns.
 pub fn runPwBackendChild() void {
     if (std.posix.access("/run/authd.sock", 0)) |_|
         gdmAdvertiseExtensions()

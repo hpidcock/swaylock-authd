@@ -1,5 +1,6 @@
-//! render.zig – Zig port of render.c.
-//! Draws the swaylock lock indicator surfaces using Cairo.
+//! Main rendering module for the swaylock lock indicator.
+//! Manages background compositing, indicator ring drawing,
+//! text overlays, QR codes, and authd UI elements via Cairo.
 
 const std = @import("std");
 const math = std.math;
@@ -18,12 +19,12 @@ const cairo_mod = @import("cairo.zig");
 const pool_buffer = @import("pool-buffer.zig");
 
 const pi: f64 = math.pi;
-/// Angular range of the typing indicator arc.
+/// Arc span of the typing highlight (60 degrees).
 const type_indicator_range: f64 = pi / 3.0;
-/// ARGB colour for authd error messages.
+/// Colour used for authd error text (red, fully opaque).
 const error_text_color: u32 = 0xFF4444FF;
 
-/// Cast any integer to f64 for Cairo coordinate arguments.
+/// Shorthand: cast any integer to f64 for Cairo coordinates.
 inline fn fd(x: anytype) f64 {
     return @floatFromInt(x);
 }
@@ -75,9 +76,8 @@ const surface_frame_listener: wl.wl_callback_listener = .{
 };
 
 fn render_debug_overlay(surface: *types.Surface) void {
-    // The entire body is only analysed when the overlay feature is
-    // enabled; Zig does not type-check unreachable comptime branches,
-    // so the overlay-only fields on Surface are safe here.
+    // Body is comptime-gated; overlay-only Surface fields are
+    // safe because Zig skips unreachable comptime branches.
     if (comptime opts.have_debug_overlay) {
         const state: *types.State = surface.g.?;
         if (surface.width == 0 or surface.height == 0) return;
@@ -234,7 +234,7 @@ pub fn render(surface: *types.Surface) void {
         surface.last_buffer_height = bh;
     }
 
-    // Scale may change independently of the wl_buffer dimensions.
+    // Buffer scale may change without affecting buffer size.
     wl.wl_surface_set_buffer_scale(surface.surface, surface.scale);
     _ = render_frame(surface);
     if (comptime opts.have_debug_overlay) {
@@ -291,8 +291,8 @@ fn render_frame(surface: *types.Surface) bool {
     const buffer_diameter: i32 =
         (arc_radius + arc_thickness) * 2;
 
-    // Broker / auth-mode stage: draw a vertical selection list
-    // and return early — no ring is rendered for these stages.
+    // Broker or auth-mode selection: render a list and return
+    // early without drawing the indicator ring.
     if (state.authd_active and
         (state.authd_stage == types.AuthdStage.broker or
             state.authd_stage == types.AuthdStage.auth_mode))
@@ -462,8 +462,7 @@ fn render_frame(surface: *types.Surface) bool {
         return true;
     }
 
-    // Compute the text to draw, if any; this determines the
-    // size and position of the indicator surface.
+    // Determine indicator text; affects buffer sizing.
     var attempts_buf: [5]u8 = std.mem.zeroes([5]u8);
     var text: [*c]const u8 = null;
     var layout_text: [*c]const u8 = null;
@@ -481,7 +480,7 @@ fn render_frame(surface: *types.Surface) bool {
         } else if (state.auth_state == types.AuthState.invalid) {
             text = "Wrong";
         } else {
-            // Caps Lock has higher display priority.
+            // Caps Lock takes display priority over attempts.
             if (state.xkb.caps_lock and
                 state.args.show_caps_lock_text)
             {
@@ -528,7 +527,7 @@ fn render_frame(surface: *types.Surface) bool {
         }
     }
 
-    // QR code layout replaces the ring entirely.
+    // QR code layout replaces the indicator ring.
     const is_qrcode = state.authd_active and
         state.authd_stage == types.AuthdStage.challenge and
         state.authd_layout.type != null and
@@ -538,9 +537,8 @@ fn render_frame(surface: *types.Surface) bool {
             "qrcode",
         );
 
-    // Store the QR code as an opaque pointer so the variable exists
-    // regardless of opts.have_qrencode; accessed only inside comptime
-    // blocks where the concrete type is known.
+    // Opaque pointer so the variable exists regardless of
+    // opts.have_qrencode; only dereferenced in comptime blocks.
     var qrcode_opaque: ?*anyopaque = null;
     defer if (comptime opts.have_qrencode) {
         if (qrcode_opaque) |p| {
@@ -563,7 +561,7 @@ fn render_frame(surface: *types.Surface) bool {
         }
     }
 
-    // Compute required buffer dimensions.
+    // Calculate required buffer dimensions.
     var buffer_width: i32 = buffer_diameter;
     var buffer_height: i32 = buffer_diameter;
 
@@ -578,7 +576,7 @@ fn render_frame(surface: *types.Surface) bool {
                 have_qr_image = true;
             }
         }
-        // Reserve height for the human-readable fallback code.
+        // Reserve height for the human-readable code text.
         if (state.authd_layout.qr_code != null and
             state.authd_layout.qr_code.?[0] != 0)
         {
@@ -612,7 +610,7 @@ fn render_frame(surface: *types.Surface) bool {
                     @intFromFloat(ext.width + 2.0 * box_padding);
             }
         }
-        // Suppress the keyboard layout badge alongside a QR code.
+        // No layout badge when showing a QR code.
         layout_text = null;
     } else {
         if (text != null or layout_text != null) {
@@ -653,8 +651,7 @@ fn render_frame(surface: *types.Surface) bool {
         }
     }
 
-    // Extra buffer space for CHALLENGE-stage authd elements:
-    // a label box above the ring, a button box and error below.
+    // Extra space for challenge-stage label, button, and error.
     var label_box_h: f64 = 0;
     var button_box_h: f64 = 0;
     var error_h: f64 = 0;
@@ -732,7 +729,7 @@ fn render_frame(surface: *types.Surface) bool {
         }
     }
 
-    // Buffer dimensions must be multiples of scale per protocol.
+    // Wayland requires buffer dimensions be multiples of scale.
     buffer_height += scale - @mod(buffer_height, scale);
     buffer_width += scale - @mod(buffer_width, scale);
 
@@ -774,8 +771,8 @@ fn render_frame(surface: *types.Surface) bool {
                     @as(i32, @intCast(
                         state.args.radius + state.args.thickness,
                     ));
-        // Shift up so the ring stays centred when a label
-        // box occupies space above it in the buffer.
+        // Offset upward to keep the ring centred on screen
+        // when a label box sits above it.
         subsurf_ypos -=
             @as(i32, @intFromFloat(label_box_h / fd(scale)));
     }
@@ -796,7 +793,7 @@ fn render_frame(surface: *types.Surface) bool {
     wl.cairo_set_antialias(cairo, wl.CAIRO_ANTIALIAS_BEST);
     wl.cairo_identity_matrix(cairo);
 
-    // Clear to fully transparent.
+    // Clear buffer to fully transparent.
     wl.cairo_save(cairo);
     wl.cairo_set_source_rgba(cairo, 0, 0, 0, 0);
     wl.cairo_set_operator(cairo, wl.CAIRO_OPERATOR_SOURCE);
@@ -820,7 +817,7 @@ fn render_frame(surface: *types.Surface) bool {
                 const qr_x: i32 =
                     @divTrunc(buffer_width - qr_px, 2);
 
-                // White background behind QR modules.
+                // White backdrop for QR modules.
                 wl.cairo_rectangle(
                     cairo,
                     fd(qr_x),
@@ -831,7 +828,7 @@ fn render_frame(surface: *types.Surface) bool {
                 wl.cairo_set_source_rgb(cairo, 1, 1, 1);
                 wl.cairo_fill(cairo);
 
-                // Collect all dark modules then fill in one pass.
+                // Batch all dark modules into one fill pass.
                 wl.cairo_set_source_rgb(cairo, 0, 0, 0);
                 var row: i32 = 0;
                 while (row < qr.width) : (row += 1) {
@@ -875,7 +872,7 @@ fn render_frame(surface: *types.Surface) bool {
                     box_padding;
                 qr_y += fe.height + 2.0 * box_padding;
             } else {
-                // No QR image: centre the fallback text.
+                // No QR image; centre the fallback text.
                 ty = (fd(buffer_height) - error_h) / 2.0 +
                     (fe.height / 2.0 - fe.descent);
                 qr_y = fd(buffer_height) - error_h;
@@ -888,7 +885,7 @@ fn render_frame(surface: *types.Surface) bool {
             wl.cairo_show_text(cairo, @ptrCast(state.authd_layout.qr_code));
         }
 
-        // Error text below QR content.
+        // Error message below QR content.
         if (error_h > 0) {
             var ext: wl.cairo_text_extents_t = undefined;
             wl.cairo_text_extents(cairo, @ptrCast(state.authd_error), &ext);
@@ -905,7 +902,7 @@ fn render_frame(surface: *types.Surface) bool {
     } else if (draw_indicator) {
         configure_font_drawing(cairo, state, surface.subpixel, arc_radius);
 
-        // Label box above the ring (CHALLENGE stage only).
+        // Label box above the ring (challenge stage).
         if (label_box_h > 0) {
             var fe: wl.cairo_font_extents_t = undefined;
             var ext: wl.cairo_text_extents_t = undefined;
@@ -945,14 +942,14 @@ fn render_frame(surface: *types.Surface) bool {
             wl.cairo_new_sub_path(cairo);
         }
 
-        // Ring centre Y shifts down by the label height so
-        // the ring stays visually centred on screen.
+        // Shift ring centre down by label height to keep
+        // it visually centred.
         const ring_cy: i32 =
             @as(i32, @intFromFloat(label_box_h)) +
             @divTrunc(buffer_diameter, 2);
         const cx: f64 = fd(@divTrunc(buffer_width, 2));
 
-        // Fill inner circle.
+        // Inner circle fill.
         wl.cairo_set_line_width(cairo, 0);
         wl.cairo_arc(
             cairo,
@@ -967,7 +964,7 @@ fn render_frame(surface: *types.Surface) bool {
         wl.cairo_fill_preserve(cairo);
         wl.cairo_stroke(cairo);
 
-        // Draw ring.
+        // Outer ring stroke.
         wl.cairo_set_line_width(cairo, fd(arc_thickness));
         wl.cairo_arc(
             cairo,
@@ -980,7 +977,7 @@ fn render_frame(surface: *types.Surface) bool {
         set_color_for_state(cairo, state, &state.args.colors.ring);
         wl.cairo_stroke(cairo);
 
-        // Draw status message.
+        // Status text inside the ring.
         configure_font_drawing(cairo, state, surface.subpixel, arc_radius);
         set_color_for_state(cairo, state, &state.args.colors.text);
 
@@ -999,7 +996,7 @@ fn render_frame(surface: *types.Surface) bool {
             wl.cairo_new_sub_path(cairo);
         }
 
-        // Typing indicator: highlight a random arc on keypress.
+        // Typing highlight: random arc segment on keypress.
         if (state.input_state == types.InputState.letter or
             state.input_state == types.InputState.backspace)
         {
@@ -1044,7 +1041,7 @@ fn render_frame(surface: *types.Surface) bool {
             }
             wl.cairo_stroke(cairo);
 
-            // Draw borders for the highlighted segment.
+            // Separator lines at segment edges.
             const inner_radius: f64 =
                 fd(buffer_diameter) / 2.0 -
                 fd(arc_thickness) * 1.5;
@@ -1080,7 +1077,7 @@ fn render_frame(surface: *types.Surface) bool {
             wl.cairo_stroke(cairo);
         }
 
-        // Draw inner and outer borders of the ring.
+        // Inner and outer ring border lines.
         set_color_for_state(cairo, state, &state.args.colors.line);
         wl.cairo_set_line_width(cairo, 2.0 * fd(scale));
         wl.cairo_arc(
@@ -1104,7 +1101,7 @@ fn render_frame(surface: *types.Surface) bool {
         );
         wl.cairo_stroke(cairo);
 
-        // Display keyboard layout badge.
+        // Keyboard layout badge below the ring.
         if (layout_text != null) {
             var ext: wl.cairo_text_extents_t = undefined;
             var fe: wl.cairo_font_extents_t = undefined;
@@ -1142,13 +1139,13 @@ fn render_frame(surface: *types.Surface) bool {
             wl.cairo_new_sub_path(cairo);
         }
 
-        // CHALLENGE: button and/or error text below ring.
+        // Challenge-stage button and error below ring.
         if (button_box_h > 0 or error_h > 0) {
             var fe: wl.cairo_font_extents_t = undefined;
             wl.cairo_font_extents(cairo, &fe);
             const box_padding: f64 = 4.0 * fd(scale);
 
-            // Start below the ring and optional layout badge.
+            // Position below ring and optional layout badge.
             var y: f64 = fd(
                 @as(i32, @intFromFloat(label_box_h)) + buffer_diameter,
             );
@@ -1171,7 +1168,7 @@ fn render_frame(surface: *types.Surface) bool {
                     (fd(buffer_width) - bw) / 2.0;
                 const corner: f64 = bh / 4.0;
 
-                // Rounded rectangle for the button.
+                // Rounded rectangle button shape.
                 wl.cairo_new_sub_path(cairo);
                 wl.cairo_arc(
                     cairo,
@@ -1252,7 +1249,7 @@ fn render_frame(surface: *types.Surface) bool {
         }
     }
 
-    // Send Wayland requests.
+    // Submit the indicator subsurface to the compositor.
     wl.wl_subsurface_set_position(
         surface.subsurface,
         subsurf_xpos,

@@ -1,19 +1,13 @@
-//! types.zig – Zig-native shared type definitions.
-//! Replaces the shared local C headers: swaylock.h, pool-buffer.h,
-//! seat.h, loop.h (struct types), background-image.h (mode enum),
-//! comm.h (message constants), and log.h (importance enum).
-//!
-//! Only external C library headers are imported here.  All
-//! project-local C headers are superseded by the Zig types below.
+//! Zig-native shared type definitions for swaylock.
+//! Replaces the C headers: swaylock.h, pool-buffer.h, seat.h,
+//! loop.h, background-image.h, comm.h, and log.h.
+//! Only external C library headers are imported via @cImport.
 
 const std = @import("std");
 
-/// External C library bindings re-exported for every module.
-/// Covers Cairo, Wayland client, xkbcommon, and the generated
+/// External C library bindings used across all modules.
+/// Includes Cairo, Wayland client, xkbcommon, and the generated
 /// ext-session-lock protocol header.
-/// poll.h and time.h are retained for callers that still use
-/// the raw C constants (POLLIN, CLOCK_MONOTONIC, etc.); the
-/// Loop/LoopTimer types now use std.posix equivalents directly.
 pub const c = @cImport({
     @cDefine("_POSIX_C_SOURCE", "200809L");
     @cInclude("errno.h");
@@ -28,8 +22,6 @@ pub const c = @cImport({
     @cInclude("ext-session-lock-v1-client-protocol.h");
 });
 
-// ── Background image ──────────────────────────────────────────────
-
 /// Rendering mode for background images.
 pub const BackgroundMode = enum(i32) {
     stretch = 0,
@@ -41,18 +33,16 @@ pub const BackgroundMode = enum(i32) {
     invalid,
 };
 
-// ── IPC message constants ─────────────────────────────────────────
-
-/// Message type codes for the main↔PAM-child IPC protocol.
-/// Frame layout: u8 type | u32 payload_len (LE) | u8 payload[].
+/// IPC message type codes for main/PAM-child communication.
+/// Frame: u8 type | u32 payload_len (LE) | u8 payload[].
 pub const CommMsg = struct {
-    // Sent from the main process to the PAM child.
+    // Main process to PAM child.
     pub const password: u8 = 0x01;
     pub const broker_sel: u8 = 0x02;
     pub const auth_mode_sel: u8 = 0x03;
     pub const button: u8 = 0x04;
     pub const cancel: u8 = 0x05;
-    // Sent from the PAM child to the main process.
+    // PAM child to main process.
     pub const auth_result: u8 = 0x81;
     pub const brokers: u8 = 0x82;
     pub const auth_modes: u8 = 0x83;
@@ -61,21 +51,19 @@ pub const CommMsg = struct {
     pub const auth_event: u8 = 0x86;
 };
 
-// ── Event loop ────────────────────────────────────────────────────
-
-/// Callback fired when a registered fd becomes ready.
+/// Callback invoked when a registered fd becomes ready.
 pub const FdCallback = *const fn (
     fd: i32,
     mask: i16,
     data: ?*anyopaque,
 ) callconv(.c) void;
 
-/// Callback fired when a one-shot timer expires.
+/// Callback invoked when a one-shot timer expires.
 pub const TimerCallback = *const fn (
     data: ?*anyopaque,
 ) callconv(.c) void;
 
-/// Pairs an fd with its callback and poll mask.
+/// File descriptor event registration.
 pub const FdEvent = struct {
     callback: FdCallback,
     data: ?*anyopaque,
@@ -83,7 +71,7 @@ pub const FdEvent = struct {
     mask: i16,
 };
 
-/// A one-shot timer registered in the event loop.
+/// One-shot timer registered in the event loop.
 pub const LoopTimer = struct {
     callback: TimerCallback,
     data: ?*anyopaque,
@@ -91,15 +79,13 @@ pub const LoopTimer = struct {
     removed: bool,
 };
 
-/// Poll-based event loop.
+/// Poll-based event loop managing fds and timers.
 pub const Loop = struct {
     fd_events: std.ArrayListUnmanaged(FdEvent),
     timers: std.ArrayListUnmanaged(*LoopTimer),
 };
 
-// ── Shared-memory pool buffer ─────────────────────────────────────
-
-/// A Wayland shm buffer backed by a Cairo image surface.
+/// Wayland shm buffer backed by a Cairo image surface.
 pub const PoolBuffer = struct {
     buffer: ?*c.wl_buffer,
     surface: ?*c.cairo_surface_t,
@@ -111,8 +97,6 @@ pub const PoolBuffer = struct {
     busy: bool,
 };
 
-// ── Keyboard / seat ───────────────────────────────────────────────
-
 /// xkbcommon keyboard state.
 pub const SwaylockXkb = struct {
     caps_lock: bool,
@@ -122,7 +106,7 @@ pub const SwaylockXkb = struct {
     keymap: ?*c.xkb_keymap,
 };
 
-/// Wayland seat: pointer, keyboard, and key-repeat parameters.
+/// Wayland seat with pointer, keyboard, and repeat state.
 pub const Seat = struct {
     g: ?*State,
     pointer: ?*c.wl_pointer,
@@ -134,16 +118,14 @@ pub const Seat = struct {
     repeat_timer: ?*LoopTimer,
 };
 
-// ── Authentication state ──────────────────────────────────────────
-
-/// Status of the current authentication attempt.
+/// Current authentication attempt status.
 pub const AuthState = enum(i32) {
     idle = 0,
     validating,
     invalid,
 };
 
-/// Status of the password buffer and recent key presses.
+/// Password buffer and recent keypress status.
 pub const InputState = enum(i32) {
     idle = 0,
     clear,
@@ -160,9 +142,7 @@ pub const AuthdStage = enum(i32) {
     challenge,
 };
 
-// ── Colours ───────────────────────────────────────────────────────
-
-/// ARGB colour set for a single indicator role (ring, inside, etc.).
+/// ARGB colour set for a single indicator role.
 pub const SwaylockColorSet = struct {
     input: u32,
     cleared: u32,
@@ -188,9 +168,7 @@ pub const SwaylockColors = struct {
     text: SwaylockColorSet,
 };
 
-// ── Configuration ─────────────────────────────────────────────────
-
-/// Parsed command-line / config-file arguments.
+/// Parsed command-line and config-file arguments.
 pub const SwaylockArgs = struct {
     colors: SwaylockColors,
     mode: BackgroundMode,
@@ -221,37 +199,33 @@ pub const SwaylockPassword = struct {
     buffer: ?[]u8,
 };
 
-// ── Authd types ───────────────────────────────────────────────────
-
-/// An authd authentication broker (id + display name).
+/// Authd authentication broker (id and display name).
 pub const AuthdBroker = struct {
     id: ?[*:0]u8,
     name: ?[*:0]u8,
 };
 
-/// An authd authentication mode (id + display label).
+/// Authd authentication mode (id and display label).
 pub const AuthdAuthMode = struct {
     id: ?[*:0]u8,
     label: ?[*:0]u8,
 };
 
-/// UI layout descriptor sent by the authd broker.
+/// UI layout descriptor from the authd broker.
 pub const AuthdUiLayout = extern struct {
     type: ?[*:0]u8,
     label: ?[*:0]u8,
     button: ?[*:0]u8,
-    /// Entry field hint: "chars", "chars_password", "digits", etc.
+    /// Entry hint: "chars", "chars_password", "digits", etc.
     entry: ?[*:0]u8,
     wait: bool,
-    /// Raw content to encode into a QR image.
+    /// Raw content to encode as a QR image.
     qr_content: ?[*:0]u8,
     /// Human-readable fallback for the QR code.
     qr_code: ?[*:0]u8,
 };
 
-// ── Global state ──────────────────────────────────────────────────
-
-/// Global swaylock process state (one instance per process).
+/// Global swaylock process state (one per process).
 pub const State = struct {
     eventloop: ?*Loop,
     input_idle_timer: ?*LoopTimer,
@@ -261,19 +235,19 @@ pub const State = struct {
     compositor: ?*c.wl_compositor,
     subcompositor: ?*c.wl_subcompositor,
     shm: ?*c.wl_shm,
-    /// All per-output lock surfaces.
+    /// Per-output lock surfaces.
     surfaces: std.ArrayListUnmanaged(*Surface),
-    /// Loaded background images, one per -i argument.
+    /// Background images (one per -i argument).
     images: std.ArrayListUnmanaged(*Image),
     args: SwaylockArgs,
     password: SwaylockPassword,
     xkb: SwaylockXkb,
-    /// Cairo surface/context used only for font-size measurements.
+    /// Cairo surface used for font-size measurement.
     test_surface: ?*c.cairo_surface_t,
     test_cairo: ?*c.cairo_t,
     auth_state: AuthState,
     input_state: InputState,
-    /// Highlight arc start position; 2048 = one full revolution.
+    /// Highlight arc start; 2048 = one full revolution.
     highlight_start: u32,
     failed_attempts: i32,
     run_display: bool,
@@ -281,17 +255,17 @@ pub const State = struct {
     lock_failed: bool,
     ext_session_lock_manager_v1: ?*c.ext_session_lock_manager_v1,
     ext_session_lock_v1: ?*c.ext_session_lock_v1,
-    // authd multi-stage fields; only meaningful when authd_active.
+    // Authd multi-stage fields; only used when authd_active.
     authd_active: bool,
     authd_stage: AuthdStage,
     authd_brokers: []AuthdBroker,
-    /// Index of the selected broker; -1 = nothing selected yet.
+    /// Selected broker index; -1 means none selected.
     authd_sel_broker: i32,
     authd_auth_modes: []AuthdAuthMode,
-    /// Index of the selected auth mode; -1 = nothing selected yet.
+    /// Selected auth mode index; -1 means none selected.
     authd_sel_auth_mode: i32,
     authd_layout: AuthdUiLayout,
-    /// Optional error / info message from the broker.
+    /// Error or info message from the broker.
     authd_error: ?[*:0]u8,
 };
 
@@ -303,14 +277,13 @@ pub const Surface = struct {
     output_global_name: u32,
     /// Background Wayland surface.
     surface: ?*c.wl_surface,
-    /// Indicator child surface (made into a subsurface).
+    /// Indicator child surface (subsurface).
     child: ?*c.wl_surface,
     subsurface: ?*c.wl_subsurface,
     ext_session_lock_surface_v1: ?*c.ext_session_lock_surface_v1,
     indicator_buffers: [2]PoolBuffer,
-    // Debug-overlay surfaces.  Always present in the struct so the
-    // layout is independent of the have_debug_overlay option; fields
-    // are null / zeroed when the feature is disabled.
+    // Debug-overlay fields are always present for layout
+    // stability; null/zeroed when the feature is disabled.
     overlay: ?*c.wl_surface,
     overlay_sub: ?*c.wl_subsurface,
     overlay_buffers: [2]PoolBuffer,
@@ -322,7 +295,7 @@ pub const Surface = struct {
     subpixel: c.wl_output_subpixel,
     output_name: ?[*:0]u8,
     frame: ?*c.wl_callback,
-    /// Size of the last wl_buffer committed to the background.
+    /// Size of the last committed background buffer.
     last_buffer_width: i32,
     last_buffer_height: i32,
 };

@@ -1,18 +1,14 @@
-//! cairo.zig – Zig port of cairo.c.
-//! Helper wrappers around the Cairo drawing library.
+//! Cairo helper wrappers and GdkPixbuf FFI declarations.
 
 const builtin = @import("builtin");
 const opts = @import("cairo_options");
 
 const types = @import("types.zig");
 
-// No local C imports needed — cairo/wayland types come from types.c.
 const c = types.c;
 
-// Minimal hand-rolled declarations for the gdk-pixbuf symbols needed
-// by gdk_cairo_image_surface_create_from_pixbuf. Zig 0.16's aro
-// C-frontend cannot parse the glib pragma-heavy headers, so we avoid
-// @cImporting them and instead declare just what we need here.
+// GdkPixbuf symbols declared manually because Zig's aro frontend
+// cannot parse the GLib/GObject pragma-heavy headers.
 pub const GdkPixbuf = opaque {};
 extern fn gdk_pixbuf_get_n_channels(
     pixbuf: ?*const GdkPixbuf,
@@ -24,8 +20,7 @@ extern fn gdk_pixbuf_get_width(pixbuf: ?*const GdkPixbuf) c_int;
 extern fn gdk_pixbuf_get_height(pixbuf: ?*const GdkPixbuf) c_int;
 extern fn gdk_pixbuf_get_rowstride(pixbuf: ?*const GdkPixbuf) c_int;
 
-/// Sets the Cairo source colour from a packed ARGB u32.
-/// Byte order: RRGGBBAA (most-significant byte = red).
+/// Unpacks a 32-bit RRGGBBAA colour into cairo_set_source_rgba.
 pub fn cairoSetSourceU32(
     cairo: ?*c.cairo_t,
     color: u32,
@@ -39,7 +34,7 @@ pub fn cairoSetSourceU32(
     );
 }
 
-/// Converts a Wayland subpixel hint to the Cairo subpixel order.
+/// Maps wl_output_subpixel to cairo_subpixel_order_t.
 pub fn toCairoSubpixelOrder(
     subpixel: c.wl_output_subpixel,
 ) c.cairo_subpixel_order_t {
@@ -53,18 +48,16 @@ pub fn toCairoSubpixelOrder(
 }
 
 pub const GdkExports = if (opts.have_gdk_pixbuf) struct {
-    /// Premultiplies a colour channel by an alpha value, using the
-    /// integer rounding approximation from the original C source.
-    /// Equivalent to lround(channel * alpha / 255.0) for all values
-    /// in [0..0xfe02].
+    /// Premultiplies a colour channel by alpha. Uses the integer
+    /// approximation (z + (z >> 8)) >> 8 where z = c*a + 0x80.
     inline fn premulAlpha(channel: u8, alpha: u8) u8 {
         const z: u32 = @as(u32, channel) * @as(u32, alpha) + 0x80;
         return @truncate((z + (z >> 8)) >> 8);
     }
 
-    /// Creates a Cairo ARGB32 image surface from a GdkPixbuf,
-    /// premultiplying alpha as required by Cairo.
-    /// Returns null on failure.
+    /// Converts a GdkPixbuf to a Cairo ARGB32 image surface,
+    /// premultiplying alpha as Cairo requires. Returns null on
+    /// failure.
     pub fn gdkCairoImageSurfaceCreateFromPixbuf(
         gdkbuf: ?*const GdkPixbuf,
     ) ?*c.cairo_surface_t {

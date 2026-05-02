@@ -1,4 +1,4 @@
-//! loop.zig – poll(2)-based event loop for Wayland clients.
+//! poll(2)-based event loop for Wayland clients.
 
 const std = @import("std");
 const types = @import("types.zig");
@@ -8,7 +8,7 @@ inline fn alloc() std.mem.Allocator {
     return @import("allocator").general();
 }
 
-/// Creates a new event loop.
+/// Allocates and initialises a new event loop.
 pub fn loopCreate() ?*types.Loop {
     const loop = alloc().create(types.Loop) catch {
         log.slog(
@@ -26,7 +26,7 @@ pub fn loopCreate() ?*types.Loop {
     return loop;
 }
 
-/// Destroys the event loop, freeing all resources.
+/// Frees all registered fds, timers, and the loop itself.
 pub fn loopDestroy(loop: *types.Loop) void {
     loop.fd_events.deinit(alloc());
     for (loop.timers.items) |t| alloc().destroy(t);
@@ -34,9 +34,8 @@ pub fn loopDestroy(loop: *types.Loop) void {
     alloc().destroy(loop);
 }
 
-/// Polls the event loop once, dispatching ready fds and expired
-/// timers. Blocks until at least one event is ready or a timer
-/// fires.
+/// Polls once, dispatching ready fds and expired timers.
+/// Blocks until an event is ready or a timer fires.
 pub fn loopPoll(loop: *types.Loop) void {
     var ms: i32 = std.math.maxInt(i32);
     if (loop.timers.items.len > 0) {
@@ -57,8 +56,7 @@ pub fn loopPoll(loop: *types.Loop) void {
     }
     if (ms < 0) ms = 0;
 
-    // Build a pollfd slice on the stack.  64 fds is well above any
-    // realistic swaylock fd count.
+    // Stack-allocated pollfd array; 64 exceeds any realistic count.
     var poll_buf: [64]std.posix.pollfd = undefined;
     const n = loop.fd_events.items.len;
     std.debug.assert(n <= poll_buf.len);
@@ -79,7 +77,7 @@ pub fn loopPoll(loop: *types.Loop) void {
         std.process.exit(1);
     };
 
-    // Dispatch fd events.
+    // Dispatch ready fd callbacks.
     for (loop.fd_events.items, 0..) |ev, i| {
         const pfd = poll_buf[i];
         const events: i16 =
@@ -88,7 +86,7 @@ pub fn loopPoll(loop: *types.Loop) void {
             ev.callback(pfd.fd, pfd.revents, ev.data);
     }
 
-    // Dispatch expired timers.
+    // Dispatch and remove expired timers.
     if (loop.timers.items.len > 0) {
         const now = std.posix.clock_gettime(.MONOTONIC) catch
             std.posix.timespec{ .sec = 0, .nsec = 0 };
@@ -115,7 +113,7 @@ pub fn loopPoll(loop: *types.Loop) void {
     }
 }
 
-/// Adds a file descriptor to the event loop.
+/// Registers an fd with the given event mask and callback.
 pub fn loopAddFd(
     loop: *types.Loop,
     fd: i32,
@@ -138,7 +136,7 @@ pub fn loopAddFd(
     };
 }
 
-/// Adds a one-shot timer that fires after ms milliseconds.
+/// Adds a one-shot timer firing after ms milliseconds.
 /// Returns null on allocation failure.
 pub fn loopAddTimer(
     loop: *types.Loop,
@@ -183,8 +181,7 @@ pub fn loopAddTimer(
     return timer;
 }
 
-/// Removes a file descriptor from the event loop.
-/// Returns true if the fd was found and removed.
+/// Removes an fd from the loop. Returns true if found.
 pub fn loopRemoveFd(loop: *types.Loop, fd: i32) bool {
     for (loop.fd_events.items, 0..) |ev, i| {
         if (ev.fd == fd) {
@@ -195,8 +192,7 @@ pub fn loopRemoveFd(loop: *types.Loop, fd: i32) bool {
     return false;
 }
 
-/// Marks a timer for deferred removal. The memory is freed on the
-/// next loopPoll call.
+/// Marks a timer for deferred removal on next poll cycle.
 pub fn loopRemoveTimer(
     loop: *types.Loop,
     remove: *types.LoopTimer,

@@ -1,11 +1,11 @@
-//! log.zig – structured log output with timestamps, ANSI
-//! colouring, and an optional in-memory ring-buffer overlay.
+//! Structured logging with UTC timestamps, ANSI colour output,
+//! and an optional in-memory ring buffer for a debug overlay.
 
 const std = @import("std");
 const opts = @import("log_options");
 const types = @import("types.zig");
 
-/// Log verbosity levels
+/// Log verbosity levels used for filtering output.
 pub const LogImportance = enum(u32) {
     silent = 0,
     err = 1,
@@ -18,8 +18,8 @@ const verbosity_colors = [LogImportance][]const u8{};
 
 var log_importance = LogImportance.err;
 
-/// Line count and length for the debug overlay ring buffer.
-/// These must match LOG_OVERLAY_LINES / LOG_OVERLAY_LINE_LEN in log.h.
+/// Ring buffer dimensions for the debug overlay.
+/// Must match LOG_OVERLAY_LINES / LOG_OVERLAY_LINE_LEN in log.h.
 pub const overlay_lines = 24;
 pub const overlay_line_len = 220;
 
@@ -42,8 +42,8 @@ pub fn logInit(verbosity: LogImportance) void {
     }
 }
 
-/// Emits a log line to stderr with a UTC timestamp and optional
-/// ANSI colour.
+/// Writes a log line to stderr with a UTC timestamp and
+/// optional ANSI colour based on verbosity.
 fn swayLog(verbosity: LogImportance, msg: []const u8) void {
     if (@intFromEnum(verbosity) > @intFromEnum(log_importance)) return;
 
@@ -59,8 +59,8 @@ fn swayLog(verbosity: LogImportance, msg: []const u8) void {
     const stderr = std.io.getStdErr();
     const use_color = std.posix.isatty(stderr.handle);
 
-    // Format UTC timestamp. localtime is unavailable without C;
-    // timestamps are displayed in UTC.
+    // Format a UTC timestamp. We use UTC because localtime
+    // is unavailable without libc.
     const ep = std.time.epoch;
     const secs: u64 = @intCast(std.time.timestamp());
     const epoch_secs = ep.EpochSeconds{ .secs = secs };
@@ -88,10 +88,10 @@ fn swayLog(verbosity: LogImportance, msg: []const u8) void {
     w.writeAll(ts) catch {};
     if (use_color) {
         w.writeAll(switch (verbosity) {
-            LogImportance.silent => "", // LOG_SILENT
-            LogImportance.err => "\x1B[1;31m", // LOG_ERROR
-            LogImportance.info => "\x1B[1;34m", // LOG_INFO
-            LogImportance.debug => "\x1B[1;90m", // LOG_DEBUG
+            LogImportance.silent => "",
+            LogImportance.err => "\x1B[1;31m",
+            LogImportance.info => "\x1B[1;34m",
+            LogImportance.debug => "\x1B[1;90m",
             else => "",
         }) catch {};
     }
@@ -101,7 +101,8 @@ fn swayLog(verbosity: LogImportance, msg: []const u8) void {
     bw.flush() catch {};
 }
 
-/// Emits a formatted log line with source location prepended.
+/// Primary logging function. Formats a message with source
+/// location prepended, then delegates to swayLog.
 pub fn slog(
     verbosity: LogImportance,
     src: std.builtin.SourceLocation,
@@ -123,10 +124,10 @@ pub fn slog(
     swayLog(verbosity, full);
 }
 
-/// Returns a snapshot of the debug log overlay sorted oldest-first.
-/// count_out is set to the number of valid lines (0..overlay_lines).
-/// The returned pointer is to an internal static buffer; callers
-/// must not free or write to it.
+/// Returns a snapshot of the overlay ring buffer sorted
+/// oldest-first. Sets count_out to the number of valid lines.
+/// The returned pointer refers to an internal static buffer;
+/// callers must not free or write to it.
 pub fn getOverlay(count_out: *i32) ?[*][overlay_line_len]u8 {
     if (comptime !opts.have_debug_overlay) {
         count_out.* = 0;
@@ -142,7 +143,7 @@ pub fn getOverlay(count_out: *i32) ?[*][overlay_line_len]u8 {
     return @as(?[*][overlay_line_len]u8, @ptrCast(&overlay.snap));
 }
 
-/// Strips leading "./" path components from a file path literal.
+/// Strips leading "./" components from a file path.
 fn stripPath(filepath: []const u8) []const u8 {
     if (filepath.len == 0 or filepath[0] != '.') return filepath;
     var i: usize = 0;

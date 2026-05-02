@@ -1,21 +1,18 @@
-//! background-image.zig – Zig port of background-image.c.
-//! Parses background mode strings, loads background images,
-//! and renders them onto Cairo surfaces.
+//! Loads and renders background images onto Cairo surfaces.
+//! Supports multiple scaling modes and optional GdkPixbuf decoding.
 
 const std = @import("std");
 const opts = @import("background_image_options");
 const types = @import("types.zig");
 
-// No local C imports needed — cairo types come from types.c.
 const c = types.c;
 
 const log = @import("log.zig");
 
-// Reuse the GdkPixbuf opaque type from cairo.zig so that the type
-// passed to gdkCairoImageSurfaceCreateFromPixbuf is compatible.
+// GdkPixbuf type reused from cairo.zig for FFI compatibility.
 const cairo_mod = @import("cairo.zig");
 const GdkPixbuf = cairo_mod.GdkPixbuf;
-/// Matches struct _GError { GQuark domain; gint code; gchar *message; }
+/// GLib error structure for FFI with gdk-pixbuf.
 const GError = extern struct {
     domain: u32,
     code: i32,
@@ -31,8 +28,8 @@ extern fn gdk_pixbuf_apply_embedded_orientation(
 
 extern fn g_object_unref(object: ?*anyopaque) void;
 
-/// Parses a background mode string and returns the corresponding
-/// enum value, or .invalid on an unknown string.
+/// Converts a mode string to a BackgroundMode enum value.
+/// Returns .invalid if the string is unrecognised.
 pub fn parseBackgroundMode(mode: []const u8) types.BackgroundMode {
     if (std.mem.eql(u8, mode, "stretch")) {
         return types.BackgroundMode.stretch;
@@ -56,11 +53,10 @@ pub fn parseBackgroundMode(mode: []const u8) types.BackgroundMode {
     return types.BackgroundMode.invalid;
 }
 
-/// Loads a background image from path. When compiled with
-/// gdk_pixbuf support, any format supported by gdk-pixbuf is
-/// accepted and embedded orientation is applied; otherwise only
-/// PNG images are supported via Cairo directly.
-/// Returns a cairo surface on success, or null on failure.
+/// Loads a background image from the given path. Uses GdkPixbuf
+/// when available (handles orientation and many formats), falling
+/// back to Cairo PNG-only loading otherwise. Returns a Cairo
+/// surface or null on failure.
 pub fn loadBackgroundImage(
     path: [:0]const u8,
 ) ?*c.cairo_surface_t {
@@ -81,8 +77,7 @@ pub fn loadBackgroundImage(
             );
             return null;
         }
-        // Correct for embedded image orientation; typical images
-        // are not rotated and will be handled efficiently.
+        // Apply embedded EXIF orientation correction.
         const oriented = gdk_pixbuf_apply_embedded_orientation(pixbuf);
         g_object_unref(pixbuf);
         image = cairo_mod.GdkExports.gdkCairoImageSurfaceCreateFromPixbuf(oriented);
@@ -127,10 +122,9 @@ pub fn loadBackgroundImage(
     return image;
 }
 
-/// Renders image onto cairo using the given mode, scaling it to
-/// fit within buffer_width x buffer_height.
-/// .solid_color and .invalid are not valid here and will trigger
-/// unreachable.
+/// Renders an image onto a Cairo context scaled to the given
+/// buffer dimensions using the specified background mode.
+/// Modes .solid_color and .invalid are invalid here.
 pub fn renderBackgroundImage(
     cairo: ?*c.cairo_t,
     image: ?*c.cairo_surface_t,
@@ -200,8 +194,7 @@ pub fn renderBackgroundImage(
             }
         },
         .center => {
-            // Align to integer pixel boundaries to prevent clarity
-            // loss on odd-sized images.
+            // Truncate to pixel boundaries for sharpness.
             c.cairo_set_source_surface(
                 cairo,
                 image,

@@ -1,4 +1,4 @@
-//! main.zig – Zig port of main.c.
+//! Main entry point for swaylock (C ABI export).
 
 const std = @import("std");
 const opts = @import("main_options");
@@ -27,7 +27,7 @@ const allocator_mod = @import("allocator");
 var sigusr_fds: [2]i32 = .{ -1, -1 };
 var g: types.State = std.mem.zeroes(types.State);
 
-/// Duplicate a Zig slice into a C malloc-owned null-terminated string.
+/// Duplicates a slice into a C-allocated null-terminated string.
 fn dupStr(s: []const u8) ?[*:0]u8 {
     const result = std.heap.c_allocator.dupeZ(u8, s) catch
         return null;
@@ -589,9 +589,8 @@ fn fileExists(path: []const u8) bool {
     return true;
 }
 
-// getConfigPath searches the standard locations for a swaylock config
-// file, returning an allocated slice on success. The caller must free
-// the returned slice using the same allocator.
+// Searches standard locations for a swaylock config file.
+// Returns an allocator-owned slice; caller must free.
 fn getConfigPath(allocator: std.mem.Allocator) ?[]u8 {
     const home = std.posix.getenv("HOME") orelse return null;
     const xdg = std.posix.getenv("XDG_CONFIG_HOME");
@@ -603,7 +602,7 @@ fn getConfigPath(allocator: std.mem.Allocator) ?[]u8 {
     if (fileExists(path1)) return path1;
     allocator.free(path1);
 
-    // sysconfdir path is comptime-known from build options.
+    // sysconfdir is comptime-known from build options.
     const path3 = opts.sysconfdir ++ "/swaylock/config";
 
     const path2 = if (xdg != null and xdg.?.len > 0)
@@ -790,7 +789,7 @@ fn commIn(
             }
         },
         types.CommMsg.brokers => {
-            // Parse JSON array [{id, name}, ...]
+            // Parse broker list from JSON array.
             pam_mod.authdBrokersFree(g.authd_brokers);
             g.authd_brokers = &.{};
             g.authd_sel_broker = 0;
@@ -806,7 +805,7 @@ fn commIn(
             state.damageState(&g);
         },
         types.CommMsg.auth_modes => {
-            // Parse JSON array [{id, label}, ...]
+            // Parse auth-mode list from JSON array.
             pam_mod.authdAuthModesFree(g.authd_auth_modes);
             g.authd_auth_modes = &.{};
             g.authd_sel_auth_mode = 0;
@@ -822,7 +821,7 @@ fn commIn(
             state.damageState(&g);
         },
         types.CommMsg.ui_layout => {
-            // Parse UILayout JSON object.
+            // Parse UI layout from JSON object.
             pam_mod.authdUiLayoutClear(&g.authd_layout);
             std.c.free(@ptrCast(g.authd_error));
             g.authd_error = null;
@@ -888,7 +887,7 @@ fn commIn(
             }
         },
         types.CommMsg.auth_event => {
-            // Intermediate result — show as error/info.
+            // Intermediate auth result for display.
             std.c.free(@ptrCast(g.authd_error));
             g.authd_error = null;
             parseAuthEvent(read.payload);
@@ -1021,8 +1020,7 @@ fn termIn(
     g.run_display = false;
 }
 
-// Check for --debug early so the child process also gets the right
-// Scan argv early for -d/--debug so the log level is set before
+// Scans argv for -d/--debug so the log level is set before
 // full option parsing runs.
 fn logInit(argc: c_int, argv: [*c][*c]u8) void {
     for (1..@as(usize, @intCast(argc))) |i| {
@@ -1137,8 +1135,7 @@ export fn main(argc: c_int, argv: [*c][*c]u8) c_int {
         return 1;
     };
     sigusr_fds = pipe_fds;
-    // Set the write end of the signal pipe non-blocking so that
-    // the signal handler never blocks.
+    // Non-blocking write end prevents signal handler blocking.
     const nonblock: u32 =
         @bitCast(std.posix.O{ .NONBLOCK = true });
     _ = std.posix.fcntl(

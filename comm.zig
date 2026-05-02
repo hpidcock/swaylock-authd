@@ -1,5 +1,4 @@
-//! comm.zig – Zig port of comm.c.
-//! IPC pipes between the main swaylock process and the PAM child.
+//! IPC pipe communication between the main process and PAM child.
 
 const std = @import("std");
 const types = @import("types.zig");
@@ -8,10 +7,11 @@ const log = @import("log.zig");
 const password_buffer = @import("password_buffer.zig");
 
 /// Maximum payload size accepted from the pipe (1 MiB).
+/// Prevents unbounded allocation from malformed messages.
 const comm_max_payload: usize = 1 << 20;
 
-// comm_fds[0]: main→child  (main writes [1], child reads [0])
-// comm_fds[1]: child→main  (child writes [1], main reads [0])
+// comm_fds[0]: main writes [1], child reads [0].
+// comm_fds[1]: child writes [1], main reads [0].
 var comm_fds: [2][2]i32 = .{ .{ -1, -1 }, .{ -1, -1 } };
 
 fn slogErrno(
@@ -77,10 +77,9 @@ fn storeLe32(b: *[4]u8, v: u32) void {
     b[3] = @truncate(v >> 24);
 }
 
-/// Result of a comm read.
-/// When msg_type <= 0: payload is empty (0 = EOF, -1 = error).
-/// When msg_type > 0: payload is malloc-allocated; free with
-///   std.c.free(result.payload.ptr) when payload.len > 0.
+/// Result of reading a message from the pipe.
+/// msg_type <= 0: payload is empty (0 = EOF, -1 = error).
+/// msg_type > 0: payload is malloc-allocated; caller frees.
 pub const CommRead = struct {
     msg_type: i32,
     payload: []u8,
@@ -141,17 +140,17 @@ fn commWrite(
     return true;
 }
 
-/// Returns the fd the child reads incoming messages from.
+/// Returns the fd the child reads from.
 pub fn getCommChildFd() i32 {
     return comm_fds[0][0];
 }
 
-/// Reads a message from the child-facing pipe.
+/// Reads a message from the main-to-child pipe.
 pub fn commChildRead() CommRead {
     return commRead(comm_fds[0][0]);
 }
 
-/// Writes a message to the child-facing pipe.
+/// Writes a message on the child-to-main pipe.
 pub fn commChildWrite(
     msg_type: u8,
     payload: []const u8,
@@ -159,12 +158,12 @@ pub fn commChildWrite(
     return commWrite(comm_fds[1][1], msg_type, payload);
 }
 
-/// Reads a message from the main-facing pipe.
+/// Reads a message from the child-to-main pipe.
 pub fn commMainRead() CommRead {
     return commRead(comm_fds[1][0]);
 }
 
-/// Writes a message to the main-facing pipe.
+/// Writes a message on the main-to-child pipe.
 pub fn commMainWrite(
     msg_type: u8,
     payload: []const u8,
@@ -172,13 +171,13 @@ pub fn commMainWrite(
     return commWrite(comm_fds[0][1], msg_type, payload);
 }
 
-/// Returns the fd to poll for messages from the child.
+/// Returns the fd to poll for child replies.
 pub fn getCommReplyFd() i32 {
     return comm_fds[1][0];
 }
 
-/// Clears and sends the password buffer as a COMM_MSG_PASSWORD frame.
-/// The password buffer is always cleared before returning.
+/// Sends the password as a COMM_MSG_PASSWORD frame.
+/// The password buffer is always zeroed before returning.
 pub fn writeCommPassword(pw: *types.SwaylockPassword) bool {
     const size: usize = @intCast(pw.len + 1);
     const copy = password_buffer.create(size);
@@ -197,7 +196,7 @@ pub fn writeCommPassword(pw: *types.SwaylockPassword) bool {
     return ok;
 }
 
-/// Spawns the comm child process.
+/// Forks the comm child process and sets up pipe fds.
 pub fn spawnCommChild(child_fn: *const fn () void) bool {
     const fds0 = std.posix.pipe() catch |err| {
         slogErrno(log.LogImportance.err, @src(), "failed to create pipe", err);
@@ -226,9 +225,8 @@ pub fn spawnCommChild(child_fn: *const fn () void) bool {
         );
         std.posix.close(comm_fds[0][1]);
         std.posix.close(comm_fds[1][0]);
-        // Redirect stdin and stdout to /dev/null so the PAM
-        // module cannot fall back to prompting on the terminal
-        // if the main process exits or authd is unavailable.
+        // Redirect stdio to /dev/null so PAM cannot fall
+        // back to terminal prompting.
         if (std.posix.open(
             "/dev/null",
             .{ .ACCMODE = .RDWR },
@@ -239,7 +237,7 @@ pub fn spawnCommChild(child_fn: *const fn () void) bool {
             if (devnull > 1) std.posix.close(devnull);
         } else |_| {}
         child_fn();
-        // child_fn calls exit(); unreachable
+        // child_fn never returns.
         unreachable;
     }
     std.posix.close(comm_fds[0][0]);

@@ -1,9 +1,10 @@
-//! allocator.zig – Process-wide allocator singletons.
+//! Process-wide allocator singletons for the swaylock Wayland
+//! lock screen.
 //!
-//! Provides three allocators for use across all Zig source:
-//!   general()    – fixed-buffer in release, DebugAllocator in debug
-//!   render()     – arena allocator, reset each frame
-//!   c_ffi        – always c_allocator for C FFI boundaries
+//! Provides three allocators:
+//!   general()  - FixedBuffer in release, DebugAllocator in debug
+//!   render()   - arena allocator, reset each frame
+//!   c_ffi      - always c_allocator for C FFI boundaries
 //!
 //! Call init() once at process start and deinit() on clean exit.
 
@@ -12,23 +13,17 @@ const builtin = @import("builtin");
 
 const is_debug = builtin.mode == .Debug;
 
-// ── General ───────────────────────────────────────────────────────
-
 var da: std.heap.DebugAllocator(.{}) = .{};
 
 /// 256 KiB static backing buffer for the fixed-buffer allocator.
 var gen_buf: [256 * 1024]u8 = undefined;
 var gen_fba: std.heap.FixedBufferAllocator = undefined;
 
-// ── Render arena ──────────────────────────────────────────────────
-
-/// In debug: a fresh DebugAllocator backs the arena each frame so
-/// that resetRender() can deinit and check for leaks between frames.
-/// In release: a plain ArenaAllocator backed by PageAllocator.
+// In debug builds a DebugAllocator backs the arena so that
+// resetRender() can check for leaks between frames.
+// In release builds a plain PageAllocator is used instead.
 var render_da: std.heap.DebugAllocator(.{}) = .{};
 var render_arena: std.heap.ArenaAllocator = undefined;
-
-// ── Lifecycle ─────────────────────────────────────────────────────
 
 /// Initialise all allocator singletons.
 /// Must be called once before general() or render() are used.
@@ -51,25 +46,23 @@ pub fn deinit() void {
     }
 }
 
-// ── Public allocators ─────────────────────────────────────────────
-
-/// General-purpose allocator for non-render, non-FFI allocations.
+/// General-purpose allocator for non-render, non-FFI use.
 /// Release: fixed-buffer over a 256 KiB static buffer.
-/// Debug: DebugAllocator for leak and use-after-free detection.
+/// Debug: DebugAllocator for leak/use-after-free detection.
 pub fn general() std.mem.Allocator {
     return if (is_debug) da.allocator() else gen_fba.allocator();
 }
 
-/// Arena allocator for render-frame allocations.
-/// Reset between frames by calling resetRender().
+/// Arena allocator for per-frame render allocations.
+/// Reset between frames via resetRender().
 pub fn render() std.mem.Allocator {
     return render_arena.allocator();
 }
 
 /// Reset the render arena between frames.
-/// Release: retains backing pages for reuse.
-/// Debug: deinits the arena and its DebugAllocator to catch leaks,
-/// then reinitialises both for the next frame.
+/// In release mode backing pages are retained for reuse.
+/// In debug mode the arena and its backing allocator are
+/// torn down to detect leaks, then reinitialised.
 pub fn resetRender() void {
     if (is_debug) {
         render_arena.deinit();
@@ -81,5 +74,5 @@ pub fn resetRender() void {
     }
 }
 
-/// Always use the C allocator for C FFI calls.
+/// C allocator, used exclusively at FFI boundaries.
 pub const c_ffi: std.mem.Allocator = std.heap.c_allocator;

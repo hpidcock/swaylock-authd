@@ -1,5 +1,5 @@
-//! seat.zig – Zig port of seat.c.
-//! Handles Wayland seat events: keyboard input and pointer cursor.
+//! Wayland seat event handling: keyboard input via XKB, pointer
+//! cursor hiding, key repeat timers, and capability binding.
 
 const std = @import("std");
 const types = @import("types.zig");
@@ -213,7 +213,7 @@ fn keyboardRepeatInfo(
     if (rate <= 0) {
         seat.repeat_period_ms = -1;
     } else {
-        // Keys per second -> milliseconds between keys.
+        // Convert keys-per-second rate to millisecond period.
         seat.repeat_period_ms = @divTrunc(1000, rate);
     }
     seat.repeat_delay_ms = delay;
@@ -401,7 +401,7 @@ fn seatHandleName(
     _ = name;
 }
 
-/// Public seat listener; referenced from main.zig.
+/// Seat listener used by main.zig for capability binding.
 pub var seatListener: types.c.wl_seat_listener = .{
     .capabilities = seatHandleCapabilities,
     .name = seatHandleName,

@@ -1,5 +1,4 @@
-//! password.zig – Zig port of password.c and password-buffer.c.
-//! Manages the locked password buffer and keyboard input handling.
+//! Password buffer management and keyboard input handling.
 
 const std = @import("std");
 const types = @import("types.zig");
@@ -39,8 +38,6 @@ fn appendCh(pw: *types.SwaylockPassword, codepoint: u32) void {
     pw.buffer.?[len + utf8_size] = 0;
     pw.len += @intCast(utf8_size);
 }
-
-// ── timer callbacks ──────────────────────────────────────────────────
 
 fn setInputIdle(data: ?*anyopaque) callconv(.c) void {
     const g: *types.State = @ptrCast(@alignCast(data));
@@ -127,8 +124,6 @@ fn cancelPasswordClear(g: *types.State) void {
     }
 }
 
-// ── submit / highlight ───────────────────────────────────────────────
-
 fn submitPassword(g: *types.State) void {
     if (g.args.ignore_empty and g.password.len == 0) {
         log.slog(
@@ -177,15 +172,13 @@ fn updateHighlight(g: *types.State) void {
         (g.highlight_start + r + 512) % 2048;
 }
 
-// ── key handler ──────────────────────────────────────────────────────
-
 pub fn swaylockHandleKey(
     g: *types.State,
     keysym: wl.xkb_keysym_t,
     codepoint: u32,
 ) void {
-    // In broker or auth-mode selection, Up/Down navigate the list
-    // and Enter confirms. Tab presses the optional button.
+    // Broker/auth-mode selection: Up/Down navigate, Enter
+    // confirms, Tab presses the optional button.
     if (g.authd_active) {
         if (g.authd_stage == types.AuthdStage.broker or
             g.authd_stage == types.AuthdStage.auth_mode)
