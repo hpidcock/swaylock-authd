@@ -47,7 +47,7 @@ fn lenientStrcmp(a: ?[*:0]const u8, b: ?[*:0]const u8) i32 {
     };
 }
 
-fn daemonize() void {
+fn daemonize() !void {
     const fds = std.posix.pipe() catch {
         log.slog(
             log.LogImportance.err,
@@ -55,7 +55,7 @@ fn daemonize() void {
             "Failed to pipe",
             .{},
         );
-        std.process.exit(1);
+        return error.DaemonizeFailed;
     };
     const pid = std.posix.fork() catch {
         log.slog(
@@ -64,16 +64,18 @@ fn daemonize() void {
             "Failed to fork",
             .{},
         );
-        std.process.exit(1);
+        return error.DaemonizeFailed;
     };
     if (pid == 0) {
         _ = std.os.linux.setsid();
         std.posix.close(fds[0]);
+        // std.posix.exit is correct in a child after fork:
+        // no Zig cleanup handlers should run.
         const devnull = std.posix.open(
             "/dev/null",
             .{ .ACCMODE = .RDWR },
             0,
-        ) catch std.process.exit(1);
+        ) catch std.posix.exit(1);
         std.posix.dup2(std.posix.STDOUT_FILENO, devnull) catch {};
         std.posix.dup2(std.posix.STDERR_FILENO, devnull) catch {};
         std.posix.close(devnull);
@@ -83,14 +85,14 @@ fn daemonize() void {
                 fds[1],
                 std.mem.asBytes(&success),
             ) catch {};
-            std.process.exit(1);
+            std.posix.exit(1);
         };
         success = 1;
         const written = std.posix.write(
             fds[1],
             std.mem.asBytes(&success),
         ) catch 0;
-        if (written != 1) std.process.exit(1);
+        if (written != 1) std.posix.exit(1);
         std.posix.close(fds[1]);
     } else {
         std.posix.close(fds[1]);
@@ -106,10 +108,10 @@ fn daemonize() void {
                 "Failed to daemonize",
                 .{},
             );
-            std.process.exit(1);
+            return error.DaemonizeFailed;
         }
         std.posix.close(fds[0]);
-        std.process.exit(0);
+        return error.SuccessExit;
     }
 }
 
@@ -361,7 +363,8 @@ fn extSessionLockV1HandleFinished(
         "Failed to lock session -- is another lockscreen running?",
         .{},
     );
-    std.process.exit(2);
+    st.fatal_error = true;
+    st.run_display = false;
 }
 
 const ext_session_lock_v1_listener: wl.struct_ext_session_lock_v1_listener = .{
@@ -686,7 +689,7 @@ fn displayIn(
     fd: i32,
     mask: i16,
     data: ?*anyopaque,
-) callconv(std.builtin.CallingConvention.c) void {
+) anyerror!void {
     _ = fd;
     _ = mask;
     _ = data;
@@ -698,7 +701,7 @@ fn commIn(
     fd: i32,
     mask: i16,
     data: ?*anyopaque,
-) callconv(std.builtin.CallingConvention.c) void {
+) anyerror!void {
     _ = fd;
     _ = data;
     if ((mask & wl.POLLERR) != 0) {
@@ -708,7 +711,7 @@ fn commIn(
             "Password checking subprocess crashed; exiting.",
             .{},
         );
-        std.process.exit(1);
+        return error.CommSubprocessCrashed;
     }
     if ((mask & wl.POLLIN) == 0) {
         if ((mask & wl.POLLHUP) != 0) {
@@ -718,21 +721,21 @@ fn commIn(
                 "Password checking subprocess exited unexpectedly; exiting.",
                 .{},
             );
-            std.process.exit(1);
+            return error.CommSubprocessExited;
         }
         return;
     }
     const read = comm.commMainRead();
     defer if (read.payload.len > 0) std.c.free(read.payload.ptr);
     if (read.msg_type <= 0) {
-        if (read.msg_type == 0) std.process.exit(1);
+        if (read.msg_type == 0) return error.CommEof;
         log.slog(
             log.LogImportance.err,
             @src(),
             "comm_main_read failed; exiting.",
             .{},
         );
-        std.process.exit(1);
+        return error.CommReadFailed;
     }
     log.slog(
         log.LogImportance.debug,
@@ -993,7 +996,7 @@ fn termIn(
     fd: i32,
     mask: i16,
     data: ?*anyopaque,
-) callconv(std.builtin.CallingConvention.c) void {
+) anyerror!void {
     _ = fd;
     _ = mask;
     _ = data;
@@ -1018,7 +1021,7 @@ fn logInit(args: []const []const u8) void {
 /// the real (unprivileged) values. Must be called after the PAM
 /// child has been spawned, which retains the elevated credentials
 /// it needs. Exits on failure.
-fn dropRootPrivileges() void {
+fn dropRootPrivileges() !void {
     if (std.os.linux.setgid(std.os.linux.getgid()) != 0) {
         log.slog(
             log.LogImportance.err,
@@ -1026,7 +1029,7 @@ fn dropRootPrivileges() void {
             "setgid failed",
             .{},
         );
-        std.process.exit(1);
+        return error.PrivilegeDrop;
     }
     if (std.os.linux.setuid(std.os.linux.getuid()) != 0) {
         log.slog(
@@ -1035,7 +1038,7 @@ fn dropRootPrivileges() void {
             "setuid failed",
             .{},
         );
-        std.process.exit(1);
+        return error.PrivilegeDrop;
     }
 }
 
@@ -1049,8 +1052,8 @@ pub fn main() !void {
 
     logInit(args[1..]);
 
-    pam_mod.initializePwBackend();
-    dropRootPrivileges();
+    try pam_mod.initializePwBackend();
+    try dropRootPrivileges();
 
     var line_mode: types.LineMode = .line;
     g.failed_attempts = 0;
@@ -1090,7 +1093,11 @@ pub fn main() !void {
     setDefaultColors(&g.args.colors);
 
     var config_path: ?[]const u8 = null;
-    try params.parseOptions(args[1..], null, null, &config_path);
+    params.parseOptions(args[1..], null, null, &config_path) catch |err| {
+        if (err == error.HelpRequested or err == error.VersionRequested)
+            return;
+        return error.Fatal;
+    };
     if (config_path == null)
         config_path = getConfigPath(std.heap.c_allocator);
     defer if (config_path) |p| std.heap.c_allocator.free(p);
@@ -1108,8 +1115,10 @@ pub fn main() !void {
     }
     if (args.len > 1) {
         log.slog(log.LogImportance.debug, @src(), "Parsing CLI Args", .{});
-        params.parseOptions(args[1..], &g, &line_mode, null) catch {
+        params.parseOptions(args[1..], &g, &line_mode, null) catch |err| {
             std.c.free(@ptrCast(g.args.font));
+            if (err == error.HelpRequested or err == error.VersionRequested)
+                return;
             return error.Fatal;
         };
     }
@@ -1276,7 +1285,7 @@ pub fn main() !void {
         createSurface(surface);
     }
 
-    while (!g.locked) {
+    while (!g.locked and !g.fatal_error) {
         if (wl.wl_display_dispatch(g.display) < 0) {
             log.slog(
                 log.LogImportance.err,
@@ -1284,9 +1293,10 @@ pub fn main() !void {
                 "wl_display_dispatch() failed",
                 .{},
             );
-            std.process.exit(2);
+            return error.Fatal;
         }
     }
+    if (g.fatal_error) return error.Fatal;
 
     if (g.args.ready_fd >= 0) {
         const nw = std.posix.write(
@@ -1300,12 +1310,15 @@ pub fn main() !void {
                 "Failed to send readiness notification",
                 .{},
             );
-            std.process.exit(2);
+            return error.Fatal;
         }
         std.posix.close(g.args.ready_fd);
         g.args.ready_fd = -1;
     }
-    if (g.args.daemonize) daemonize();
+    if (g.args.daemonize) daemonize() catch |err| {
+        if (err == error.SuccessExit) return;
+        return err;
+    };
     landlock.applyToMain();
 
     loop.loopAddFd(
@@ -1359,8 +1372,9 @@ pub fn main() !void {
         {
             break;
         }
-        loop.loopPoll(g.eventloop.?);
+        try loop.loopPoll(g.eventloop.?);
     }
+    if (g.fatal_error) return error.Fatal;
 
     wl.ext_session_lock_v1_unlock_and_destroy(g.ext_session_lock_v1);
     g.ext_session_lock_v1 = null;

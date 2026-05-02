@@ -743,12 +743,14 @@ fn handleConversation(
 }
 
 /// Spawns the comm child process for PAM authentication.
-pub fn initializePwBackend() void {
-    if (!comm.spawnCommChild(runPwBackendChild)) std.process.exit(1);
+/// Spawns the PAM child process. Returns error on failure.
+pub fn initializePwBackend() !void {
+    if (!comm.spawnCommChild(runPwBackendChild))
+        return error.PwBackendFailed;
 }
 
 /// Runs the PAM authentication loop in the child. Never returns.
-pub fn runPwBackendChild() void {
+pub fn runPwBackendChild() noreturn {
     if (std.posix.access("/run/authd.sock", 0)) |_|
         gdmAdvertiseExtensions()
     else |_| {}
@@ -758,7 +760,7 @@ pub fn runPwBackendChild() void {
     );
     if (passwd_ptr == null) {
         log.slog(log.LogImportance.err, @src(), "getpwuid failed", .{});
-        std.process.exit(1);
+        std.posix.exit(1);
     }
     const username = passwd_ptr.*.pw_name;
 
@@ -776,7 +778,7 @@ pub fn runPwBackendChild() void {
         &auth_handle,
     ) != c.PAM_SUCCESS) {
         log.slog(log.LogImportance.err, @src(), "pam_start failed", .{});
-        std.process.exit(1);
+        std.posix.exit(1);
     }
     log.slog(
         log.LogImportance.debug,
@@ -806,7 +808,7 @@ pub fn runPwBackendChild() void {
 
     if (c.pam_end(auth_handle, pam_status) != c.PAM_SUCCESS) {
         log.slog(log.LogImportance.err, @src(), "pam_end failed", .{});
-        std.process.exit(1);
+        std.posix.exit(1);
     }
-    std.process.exit(if (pam_status == c.PAM_SUCCESS) 0 else 1);
+    std.posix.exit(if (pam_status == c.PAM_SUCCESS) 0 else 1);
 }

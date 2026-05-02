@@ -56,12 +56,12 @@ pub const FdCallback = *const fn (
     fd: i32,
     mask: i16,
     data: ?*anyopaque,
-) callconv(.c) void;
+) anyerror!void;
 
 /// Callback invoked when a one-shot timer expires.
 pub const TimerCallback = *const fn (
     data: ?*anyopaque,
-) callconv(.c) void;
+) anyerror!void;
 
 /// File descriptor event registration.
 pub const FdEvent = struct {
@@ -253,6 +253,9 @@ pub const State = struct {
     run_display: bool,
     locked: bool,
     lock_failed: bool,
+    /// Set by C-callbacks when a fatal error occurs; checked
+    /// in the main loop to propagate as a Zig error return.
+    fatal_error: bool,
     ext_session_lock_manager_v1: ?*c.ext_session_lock_manager_v1,
     ext_session_lock_v1: ?*c.ext_session_lock_v1,
     // Authd multi-stage fields; only used when authd_active.

@@ -282,14 +282,14 @@ pub fn parseOptions(
         switch (arg.param.id) {
             .help => {
                 std.io.getStdOut().writeAll(usage) catch {};
-                std.process.exit(0);
+                return error.HelpRequested;
             },
             .version => {
                 std.io.getStdOut().writer().print(
                     "swaylock version {s}\n",
                     .{opts.swaylock_version},
                 ) catch {};
-                std.process.exit(0);
+                return error.VersionRequested;
             },
             .debug => log.logInit(log.LogImportance.debug),
             .config => {

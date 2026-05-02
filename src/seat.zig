@@ -44,7 +44,7 @@ fn keyboardKeymap(
                     "Unable to initialise keymap shm, aborting",
                     .{},
                 );
-                std.process.exit(1);
+                return;
             };
             const map_shm: [*]const u8 = map_mem.ptr;
             keymap = types.c.xkb_keymap_new_from_buffer(
@@ -96,7 +96,7 @@ fn keyboardLeave(
     _ = surface;
 }
 
-fn keyboardRepeat(data: ?*anyopaque) callconv(.c) void {
+fn keyboardRepeat(data: ?*anyopaque) anyerror!void {
     const seat: *types.Seat = @ptrCast(@alignCast(data.?));
     const g = seat.g.?;
     seat.repeat_timer = loop.loopAddTimer(

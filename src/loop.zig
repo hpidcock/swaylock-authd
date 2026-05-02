@@ -36,7 +36,7 @@ pub fn loopDestroy(loop: *types.Loop) void {
 
 /// Polls once, dispatching ready fds and expired timers.
 /// Blocks until an event is ready or a timer fires.
-pub fn loopPoll(loop: *types.Loop) void {
+pub fn loopPoll(loop: *types.Loop) !void {
     var ms: i32 = std.math.maxInt(i32);
     if (loop.timers.items.len > 0) {
         const now = std.posix.clock_gettime(.MONOTONIC) catch
@@ -74,7 +74,7 @@ pub fn loopPoll(loop: *types.Loop) void {
             "poll failed: {s}",
             .{@errorName(err)},
         );
-        std.process.exit(1);
+        return error.PollFailed;
     };
 
     // Dispatch ready fd callbacks.
@@ -83,7 +83,7 @@ pub fn loopPoll(loop: *types.Loop) void {
         const events: i16 =
             pfd.events | (std.posix.POLL.HUP | std.posix.POLL.ERR);
         if (pfd.revents & events != 0)
-            ev.callback(pfd.fd, pfd.revents, ev.data);
+            try ev.callback(pfd.fd, pfd.revents, ev.data);
     }
 
     // Dispatch and remove expired timers.
@@ -104,8 +104,10 @@ pub fn loopPoll(loop: *types.Loop) void {
                     timer.expiry.nsec < now.nsec);
             if (expired) {
                 _ = loop.timers.orderedRemove(i);
-                timer.callback(timer.data);
+                const cb = timer.callback;
+                const data = timer.data;
                 alloc().destroy(timer);
+                try cb(data);
                 continue;
             }
             i += 1;
@@ -220,7 +222,7 @@ test "loop: addFd and removeFd" {
     defer loopDestroy(loop);
 
     const cb: types.FdCallback = struct {
-        fn f(_: i32, _: i16, _: ?*anyopaque) callconv(.c) void {}
+        fn f(_: i32, _: i16, _: ?*anyopaque) anyerror!void {}
     }.f;
 
     loopAddFd(loop, 42, std.posix.POLL.IN, cb, null);
@@ -257,7 +259,7 @@ test "loop: addFd stores data pointer" {
 
     var sentinel: u32 = 0xDEAD;
     const cb: types.FdCallback = struct {
-        fn f(_: i32, _: i16, _: ?*anyopaque) callconv(.c) void {}
+        fn f(_: i32, _: i16, _: ?*anyopaque) anyerror!void {}
     }.f;
 
     loopAddFd(
@@ -280,7 +282,7 @@ test "loop: addTimer registers timer" {
     defer loopDestroy(loop);
 
     const cb: types.TimerCallback = struct {
-        fn f(_: ?*anyopaque) callconv(.c) void {}
+        fn f(_: ?*anyopaque) anyerror!void {}
     }.f;
 
     const timer = loopAddTimer(loop, 1000, cb, null) orelse
@@ -299,7 +301,7 @@ test "loop: removeTimer marks removed" {
     defer loopDestroy(loop);
 
     const cb: types.TimerCallback = struct {
-        fn f(_: ?*anyopaque) callconv(.c) void {}
+        fn f(_: ?*anyopaque) anyerror!void {}
     }.f;
 
     const timer = loopAddTimer(loop, 500, cb, null) orelse
@@ -320,7 +322,7 @@ test "loop: removeTimer returns false for unknown timer" {
 
     var fake = types.LoopTimer{
         .callback = struct {
-            fn f(_: ?*anyopaque) callconv(.c) void {}
+            fn f(_: ?*anyopaque) anyerror!void {}
         }.f,
         .data = null,
         .expiry = .{ .sec = 0, .nsec = 0 },
@@ -336,7 +338,7 @@ test "loop: multiple fds independent remove" {
     defer loopDestroy(loop);
 
     const cb: types.FdCallback = struct {
-        fn f(_: i32, _: i16, _: ?*anyopaque) callconv(.c) void {}
+        fn f(_: i32, _: i16, _: ?*anyopaque) anyerror!void {}
     }.f;
 
     loopAddFd(loop, 10, std.posix.POLL.IN, cb, null);

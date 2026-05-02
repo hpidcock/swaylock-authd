@@ -39,14 +39,14 @@ fn appendCh(pw: *types.SwaylockPassword, codepoint: u32) void {
     pw.len += @intCast(utf8_size);
 }
 
-fn setInputIdle(data: ?*anyopaque) callconv(.c) void {
+fn setInputIdle(data: ?*anyopaque) anyerror!void {
     const g: *types.State = @ptrCast(@alignCast(data));
     g.input_idle_timer = null;
     g.input_state = types.InputState.idle;
     state.damageState(g);
 }
 
-fn setAuthIdle(data: ?*anyopaque) callconv(.c) void {
+fn setAuthIdle(data: ?*anyopaque) anyerror!void {
     const g: *types.State = @ptrCast(@alignCast(data));
     g.auth_idle_timer = null;
     g.auth_state = types.AuthState.idle;
@@ -91,7 +91,7 @@ pub fn scheduleAuthIdle(g: *types.State) void {
     );
 }
 
-fn clearPassword(data: ?*anyopaque) callconv(.c) void {
+fn clearPassword(data: ?*anyopaque) anyerror!void {
     const g: *types.State = @ptrCast(@alignCast(data));
     g.clear_password_timer = null;
     g.input_state = types.InputState.clear;

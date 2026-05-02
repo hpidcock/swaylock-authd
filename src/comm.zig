@@ -256,7 +256,7 @@ test "loadLe32 and storeLe32: roundtrip" {
 }
 
 /// Forks the comm child process and sets up pipe fds.
-pub fn spawnCommChild(child_fn: *const fn () void) bool {
+pub fn spawnCommChild(child_fn: *const fn () noreturn) bool {
     const fds0 = std.posix.pipe() catch |err| {
         slogErrno(log.LogImportance.err, @src(), "failed to create pipe", err);
         return false;
@@ -297,8 +297,6 @@ pub fn spawnCommChild(child_fn: *const fn () void) bool {
         } else |_| {}
         landlock.applyToPamChild();
         child_fn();
-        // child_fn never returns.
-        unreachable;
     }
     std.posix.close(comm_fds[0][0]);
     std.posix.close(comm_fds[1][1]);
