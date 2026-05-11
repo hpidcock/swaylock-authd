@@ -715,6 +715,9 @@ fn commIn(
     }
     if ((mask & wl.POLLIN) == 0) {
         if ((mask & wl.POLLHUP) != 0) {
+            // The child exits normally after a successful auth.
+            // Only treat POLLHUP as fatal when we're still locked.
+            if (!g.run_display) return;
             log.slog(
                 log.LogImportance.err,
                 @src(),

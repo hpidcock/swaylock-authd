@@ -158,30 +158,8 @@ pub fn authdAuthModesFree(modes: []types.AuthdAuthMode) void {
     if (modes.len > 0) std.c.free(modes.ptr);
 }
 
-/// Returns a human-readable description for a PAM status code.
-/// The pointer is valid for the lifetime of the process.
-fn getPamAuthError(pam_status: i32) [*:0]const u8 {
-    return switch (pam_status) {
-        c.PAM_AUTH_ERR => "invalid credentials",
-        c.PAM_PERM_DENIED => "permission denied; check /etc/pam.d/swaylock" ++
-            " is installed properly",
-        c.PAM_CRED_INSUFFICIENT => "swaylock cannot authenticate users; check " ++
-            "/etc/pam.d/swaylock has been installed properly",
-        c.PAM_AUTHINFO_UNAVAIL => "authentication information unavailable",
-        c.PAM_MAXTRIES => "maximum number of authentication tries exceeded",
-        else => blk: {
-            const S = struct {
-                var buf: [64]u8 = undefined;
-            };
-            _ = std.fmt.bufPrintZ(
-                &S.buf,
-                "unknown error ({d})",
-                .{pam_status},
-            ) catch {};
-            break :blk @as([*:0]const u8, @ptrCast(&S.buf));
-        },
-    };
-}
+// Delay between PAM session restarts after a non-auth error.
+const pam_restart_delay_ns = std.time.ns_per_s;
 
 /// Conversation callback state. pending[0..pending_count] holds
 /// queued GDM events for the next pollResponse.
@@ -750,6 +728,12 @@ pub fn initializePwBackend() !void {
 }
 
 /// Runs the PAM authentication loop in the child. Never returns.
+///
+/// The outer loop manages PAM sessions. On any error that is not
+/// PAM_AUTH_ERR (wrong credentials), the current session is ended
+/// and a new one is started after a short delay. PAM_AUTH_ERR is
+/// retriable within the same session, so the inner loop handles
+/// those without restarting.
 pub fn runPwBackendChild() noreturn {
     if (std.posix.access("/run/authd.sock", 0)) |_|
         gdmAdvertiseExtensions()
@@ -764,51 +748,95 @@ pub fn runPwBackendChild() noreturn {
     }
     const username = passwd_ptr.*.pw_name;
 
-    var state = ConvState{ .username = username };
-    const conv = c.pam_conv{
-        .conv = handleConversation,
-        .appdata_ptr = &state,
-    };
-
-    var auth_handle: ?*c.pam_handle_t = null;
-    if (c.pam_start(
-        "swaylock",
-        username,
-        &conv,
-        &auth_handle,
-    ) != c.PAM_SUCCESS) {
-        log.slog(log.LogImportance.err, @src(), "pam_start failed", .{});
-        std.posix.exit(1);
-    }
-    log.slog(
-        log.LogImportance.debug,
-        @src(),
-        "Prepared to authorise user {s}",
-        .{std.mem.span(username)},
-    );
-
-    var pam_status: i32 = undefined;
     while (true) {
-        pam_status = c.pam_authenticate(auth_handle, 0);
-        if (pam_status == c.PAM_SUCCESS) {
-            _ = comm.commChildWrite(types.CommMsg.auth_result, "\x01"[0..1]);
-        } else {
+        var conv_state = ConvState{ .username = username };
+        const conv = c.pam_conv{
+            .conv = handleConversation,
+            .appdata_ptr = &conv_state,
+        };
+
+        var auth_handle: ?*c.pam_handle_t = null;
+        if (c.pam_start(
+            "swaylock",
+            username,
+            &conv,
+            &auth_handle,
+        ) != c.PAM_SUCCESS) {
             log.slog(
                 log.LogImportance.err,
                 @src(),
-                "pam_authenticate failed: {s}",
-                .{std.mem.span(getPamAuthError(pam_status))},
+                "pam_start failed, retrying in 1s",
+                .{},
             );
-            _ = comm.commChildWrite(types.CommMsg.auth_result, "\x00"[0..1]);
+            std.time.sleep(pam_restart_delay_ns);
+            continue;
         }
-        if (pam_status != c.PAM_AUTH_ERR) break;
-    }
+        log.slog(
+            log.LogImportance.debug,
+            @src(),
+            "Prepared to authorise user {s}",
+            .{std.mem.span(username)},
+        );
 
-    _ = c.pam_setcred(auth_handle, c.PAM_REFRESH_CRED);
+        var pam_status: i32 = undefined;
+        while (true) {
+            pam_status = c.pam_authenticate(auth_handle, 0);
+            if (pam_status == c.PAM_SUCCESS) {
+                _ = comm.commChildWrite(
+                    types.CommMsg.auth_result,
+                    "\x01"[0..1],
+                );
+            } else {
+                log.slog(
+                    log.LogImportance.err,
+                    @src(),
+                    "pam_authenticate failed ({d}): {s}",
+                    .{
+                        pam_status,
+                        std.mem.span(
+                            c.pam_strerror(auth_handle, pam_status),
+                        ),
+                    },
+                );
+                if (pam_status == c.PAM_PERM_DENIED or
+                    pam_status == c.PAM_CRED_INSUFFICIENT)
+                {
+                    log.slog(
+                        log.LogImportance.err,
+                        @src(),
+                        "check /etc/pam.d/swaylock" ++
+                            " is installed properly",
+                        .{},
+                    );
+                }
+                _ = comm.commChildWrite(
+                    types.CommMsg.auth_result,
+                    "\x00"[0..1],
+                );
+            }
+            if (pam_status != c.PAM_AUTH_ERR) break;
+        }
 
-    if (c.pam_end(auth_handle, pam_status) != c.PAM_SUCCESS) {
-        log.slog(log.LogImportance.err, @src(), "pam_end failed", .{});
-        std.posix.exit(1);
+        _ = c.pam_setcred(auth_handle, c.PAM_REFRESH_CRED);
+        if (c.pam_end(auth_handle, pam_status) != c.PAM_SUCCESS) {
+            log.slog(
+                log.LogImportance.err,
+                @src(),
+                "pam_end failed",
+                .{},
+            );
+        }
+
+        if (pam_status == c.PAM_SUCCESS) std.posix.exit(0);
+
+        // Non-auth error: the PAM session cannot continue.
+        // Restart after a short delay.
+        log.slog(
+            log.LogImportance.err,
+            @src(),
+            "PAM session ended with error, restarting in 1s",
+            .{},
+        );
+        std.time.sleep(pam_restart_delay_ns);
     }
-    std.posix.exit(if (pam_status == c.PAM_SUCCESS) 0 else 1);
 }
