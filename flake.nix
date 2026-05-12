@@ -36,6 +36,7 @@
 
             nativeBuildInputs = with pkgs; [
               zig_0_14
+              zls_0_14
               pkg-config
               wayland-scanner
               scdoc

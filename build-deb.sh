@@ -15,7 +15,11 @@ trap cleanup EXIT INT TERM
 mkdir -p "$OUTPUT_DIR"
 
 echo "Launching Ubuntu 26.04 container..."
-lxc launch ubuntu:26.04 "$CONTAINER"
+lxc launch ubuntu:26.04 "$CONTAINER" --vm \
+	--config limits.cpu="$(nproc)" \
+	--config limits.memory=16GB
+
+sleep 30
 
 echo "Waiting for container to be ready..."
 lxc exec "$CONTAINER" -- cloud-init status --wait >/dev/null 2>&1 \
