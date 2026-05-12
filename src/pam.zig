@@ -172,7 +172,7 @@ const ConvState = struct {
 
 // Sends bytes over the IPC channel then frees the slice.
 fn commSend(msg_type: u8, bytes: []u8) void {
-    _ = comm.commChildWrite(msg_type, bytes);
+    comm.commChildWrite(msg_type, bytes);
     std.heap.c_allocator.free(bytes);
 }
 
@@ -443,7 +443,7 @@ fn handleGdmJson(
                 // "userSelection" maps to AUTHD_STAGE_NONE.
             }
             const stage_byte_array: [*]const u8 = @ptrCast(&stage_byte);
-            _ = comm.commChildWrite(
+            comm.commChildWrite(
                 types.CommMsg.stage,
                 stage_byte_array[0..1],
             );
@@ -459,7 +459,7 @@ fn handleGdmJson(
                 @intFromEnum(types.AuthdStage.challenge),
             );
             const stage_byte_array: [*]const u8 = @ptrCast(&stage_byte);
-            _ = comm.commChildWrite(
+            comm.commChildWrite(
                 types.CommMsg.stage,
                 stage_byte_array[0..1],
             );
@@ -618,7 +618,7 @@ fn handleConversation(
                 const stage_byte: [1]u8 = .{@intCast(
                     @intFromEnum(types.AuthdStage.challenge),
                 )};
-                _ = comm.commChildWrite(
+                comm.commChildWrite(
                     types.CommMsg.stage,
                     &stage_byte,
                 );
@@ -782,7 +782,7 @@ pub fn runPwBackendChild() noreturn {
         while (true) {
             pam_status = c.pam_authenticate(auth_handle, 0);
             if (pam_status == c.PAM_SUCCESS) {
-                _ = comm.commChildWrite(
+                comm.commChildWrite(
                     types.CommMsg.auth_result,
                     "\x01"[0..1],
                 );
@@ -809,7 +809,7 @@ pub fn runPwBackendChild() noreturn {
                         .{},
                     );
                 }
-                _ = comm.commChildWrite(
+                comm.commChildWrite(
                     types.CommMsg.auth_result,
                     "\x00"[0..1],
                 );

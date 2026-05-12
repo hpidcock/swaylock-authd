@@ -218,7 +218,7 @@ pub fn swaylockHandleKey(
                         const id =
                             g.authd_brokers[@intCast(sel)].id;
                         if (id != null)
-                            _ = comm.commMainWrite(
+                            comm.commMainWrite(
                                 types.CommMsg.broker_sel,
                                 id.?[0 .. std.mem.len(id.?) + 1],
                             );
@@ -231,7 +231,7 @@ pub fn swaylockHandleKey(
                         const id =
                             g.authd_auth_modes[@intCast(sel)].id;
                         if (id != null)
-                            _ = comm.commMainWrite(
+                            comm.commMainWrite(
                                 types.CommMsg.auth_mode_sel,
                                 id.?[0 .. std.mem.len(id.?) + 1],
                             );
@@ -239,7 +239,7 @@ pub fn swaylockHandleKey(
                 }
                 return;
             } else if (keysym == wl.XKB_KEY_Escape) {
-                _ = comm.commMainWrite(
+                comm.commMainWrite(
                     types.CommMsg.cancel,
                     zero,
                 );
@@ -250,7 +250,7 @@ pub fn swaylockHandleKey(
             if (keysym == wl.XKB_KEY_Tab and
                 g.authd_layout.button != null)
             {
-                _ = comm.commMainWrite(types.CommMsg.button, zero);
+                comm.commMainWrite(types.CommMsg.button, zero);
                 state.damageState(g);
                 return;
             }

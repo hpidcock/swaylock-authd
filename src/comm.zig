@@ -47,21 +47,25 @@ fn readFull(fd: i32, dst: []u8) isize {
     return @intCast(offset);
 }
 
-fn writeFull(fd: i32, src: []const u8) bool {
+fn writeFull(fd: i32, src: []const u8) void {
     var offset: usize = 0;
     while (offset < src.len) {
         const n = std.posix.write(fd, src[offset..]) catch |err| {
             if (err == error.Interrupted) continue;
             slogErrno(log.LogImportance.err, @src(), "write() failed", err);
-            return false;
+            std.process.exit(1);
         };
         if (n == 0) {
-            log.slog(log.LogImportance.err, @src(), "write() returned 0", .{});
-            return false;
+            log.slog(
+                log.LogImportance.err,
+                @src(),
+                "write() returned 0",
+                .{},
+            );
+            std.process.exit(1);
         }
         offset += n;
     }
-    return true;
 }
 
 fn loadLe32(b: *const [4]u8) u32 {
@@ -130,15 +134,12 @@ fn commWrite(
     fd: i32,
     msg_type: u8,
     payload: []const u8,
-) bool {
-    if (!writeFull(fd, std.mem.asBytes(&msg_type))) return false;
+) void {
+    writeFull(fd, std.mem.asBytes(&msg_type));
     var plen_buf: [4]u8 = undefined;
     storeLe32(&plen_buf, @intCast(payload.len));
-    if (!writeFull(fd, &plen_buf)) return false;
-    if (payload.len > 0) {
-        if (!writeFull(fd, payload)) return false;
-    }
-    return true;
+    writeFull(fd, &plen_buf);
+    if (payload.len > 0) writeFull(fd, payload);
 }
 
 /// Returns the fd the child reads from.
@@ -155,8 +156,8 @@ pub fn commChildRead() CommRead {
 pub fn commChildWrite(
     msg_type: u8,
     payload: []const u8,
-) bool {
-    return commWrite(comm_fds[1][1], msg_type, payload);
+) void {
+    commWrite(comm_fds[1][1], msg_type, payload);
 }
 
 /// Reads a message from the child-to-main pipe.
@@ -168,8 +169,8 @@ pub fn commMainRead() CommRead {
 pub fn commMainWrite(
     msg_type: u8,
     payload: []const u8,
-) bool {
-    return commWrite(comm_fds[0][1], msg_type, payload);
+) void {
+    commWrite(comm_fds[0][1], msg_type, payload);
 }
 
 /// Returns the fd to poll for child replies.
@@ -188,13 +189,9 @@ pub fn writeCommPassword(pw: *types.SwaylockPassword) bool {
     }
     @memcpy(copy.?[0..size], pw.buffer.?[0..size]);
     password_buffer.clear(pw);
-    const ok = commWrite(
-        comm_fds[0][1],
-        types.CommMsg.password,
-        copy.?[0..size],
-    );
+    commWrite(comm_fds[0][1], types.CommMsg.password, copy.?[0..size]);
     password_buffer.destroy(copy.?[0..size]);
-    return ok;
+    return true;
 }
 
 test "loadLe32: decodes little-endian bytes" {
