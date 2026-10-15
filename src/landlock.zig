@@ -33,34 +33,36 @@ const FS_REMOVE_FILE: u64 = 1 << 5;
 const FS_MAKE_CHAR: u64 = 1 << 6;
 const FS_MAKE_DIR: u64 = 1 << 7;
 const FS_MAKE_REG: u64 = 1 << 8;
-const FS_MAKE_SYM: u64 = 1 << 9;
-const FS_MAKE_SOCK: u64 = 1 << 10;
-const FS_MAKE_FIFO: u64 = 1 << 11;
-const FS_MAKE_BLOCK: u64 = 1 << 12;
-const FS_MAKE_IPC: u64 = 1 << 13;
+const FS_MAKE_SOCK: u64 = 1 << 9;
+const FS_MAKE_FIFO: u64 = 1 << 10;
+const FS_MAKE_BLOCK: u64 = 1 << 11;
+const FS_MAKE_SYM: u64 = 1 << 12;
 // ABI v2 (Linux 5.19).
-const FS_REFER: u64 = 1 << 14;
+const FS_REFER: u64 = 1 << 13;
 // ABI v3 (Linux 6.2).
-const FS_TRUNCATE: u64 = 1 << 15;
-// ABI v4 (Linux 6.7).
-const FS_IOCTL_DEV: u64 = 1 << 16;
+const FS_TRUNCATE: u64 = 1 << 14;
+// ABI v5 (Linux 6.10).
+const FS_IOCTL_DEV: u64 = 1 << 15;
 
 const ABI1: u64 =
     FS_EXECUTE | FS_WRITE_FILE | FS_READ_FILE | FS_READ_DIR |
     FS_REMOVE_DIR | FS_REMOVE_FILE | FS_MAKE_CHAR | FS_MAKE_DIR |
     FS_MAKE_REG | FS_MAKE_SYM | FS_MAKE_SOCK | FS_MAKE_FIFO |
-    FS_MAKE_BLOCK | FS_MAKE_IPC;
+    FS_MAKE_BLOCK;
 const ABI2: u64 = ABI1 | FS_REFER;
 const ABI3: u64 = ABI2 | FS_TRUNCATE;
-const ABI4: u64 = ABI3 | FS_IOCTL_DEV;
+const ABI5: u64 = ABI3 | FS_IOCTL_DEV;
 
 fn allForAbi(abi: u32) u64 {
     return switch (abi) {
         0 => 0,
         1 => ABI1,
         2 => ABI2,
-        3 => ABI3,
-        else => ABI4,
+        // ABI v4 only added network rights.
+        3, 4 => ABI3,
+        // Later ABIs add rights we deliberately leave unhandled
+        // (e.g. RESOLVE_UNIX), so connect() to sockets stays allowed.
+        else => ABI5,
     };
 }
 
