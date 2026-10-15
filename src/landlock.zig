@@ -250,8 +250,8 @@ pub fn applyToMain() void {
 
 /// Applies Landlock to the PAM child process.
 /// Must be called immediately after fork and stdio redirection,
-/// before PAM is initialised. Prevents execve (blocking pam_exec
-/// and similar) and confines writes to paths PAM legitimately
+/// before PAM is initialised. Restricts execve to PAM helper
+/// directories and confines writes to paths PAM legitimately
 /// needs at runtime.
 pub fn applyToPamChild() void {
     const rs = Ruleset.init() orelse return;
@@ -261,8 +261,17 @@ pub fn applyToPamChild() void {
     // dlopen from /lib/security (or distro equivalents), NSS
     // reads /etc/nsswitch.conf and /etc/passwd, and various
     // modules reach into /usr/share, /etc/ssl, etc.
-    // execve is intentionally absent.
     const ro = FS_READ_FILE | FS_READ_DIR;
+
+    // Some PAM modules authenticate via helper binaries:
+    // pam_authd_exec runs /usr/libexec/authd-pam and pam_unix
+    // falls back to /usr/sbin/unix_chkpwd.
+    const helper_exec = FS_READ_FILE | FS_READ_DIR | FS_EXECUTE;
+
+    // Executing a dynamically linked helper makes the kernel open
+    // its ELF interpreter for execution too. Only file-scoped
+    // rights may be granted on a regular file.
+    const loader_exec = FS_READ_FILE | FS_EXECUTE;
 
     // /dev/null is needed because stdio has been redirected there
     // before this function is called.
@@ -287,6 +296,16 @@ pub fn applyToPamChild() void {
         FS_REMOVE_DIR | FS_TRUNCATE;
 
     rs.add("/", ro);
+    rs.add("/usr/libexec", helper_exec);
+    rs.add("/usr/sbin", helper_exec);
+    // Dynamic loaders for common architectures; missing paths
+    // are skipped by add().
+    rs.add("/lib64/ld-linux-x86-64.so.2", loader_exec);
+    rs.add("/lib/ld-linux-aarch64.so.1", loader_exec);
+    rs.add("/lib/ld-linux-armhf.so.3", loader_exec);
+    rs.add("/lib64/ld64.so.2", loader_exec);
+    rs.add("/lib/ld-linux-riscv64-lp64d.so.1", loader_exec);
+    rs.add("/lib/ld64.so.1", loader_exec);
     rs.add("/dev", dev_rw);
     rs.add("/var/log", log_rw);
     rs.add("/run", run_rw);
